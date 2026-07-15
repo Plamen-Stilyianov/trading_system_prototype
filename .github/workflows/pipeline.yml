@@ -1,0 +1,71 @@
+name: Trading Platform CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # === STAGE 1: AUTOMATED INTEGRATION TESTING ===
+  test-suite:
+    name: Execute Automated Verification Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Initialize Python Runtime Environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Platform Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Run Pytest Integration Suite
+        env:
+          # Inject mock variable pathways so Pydantic builds correctly during tests
+          PYTHONPATH: ${{ github.workspace }}
+          APP_ENV: testing
+          LOG_LEVEL: WARNING
+        run: |
+          pytest -v tests/
+
+  # === STAGE 2: CONTAINER IMAGE COMPILATION ===
+  build-and-package:
+    name: Compile and Tag Docker Images
+    needs: test-suite  # ◄─ Only build images if all tests pass perfectly
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx Compiler
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compile Backend Execution Daemon Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.backend
+          push: false  # Change to true once container registry credentials (like DockerHub/AWS ECR) are linked
+          tags: |
+            trading-backend-daemon:latest
+            trading-backend-daemon:${{ github.sha }}
+
+      - name: Compile Streamlit Dashboard UI Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.dashboard
+          push: false
+          tags: |
+            trading-streamlit-ui:latest
+            trading-streamlit-ui:${{ github.sha }}

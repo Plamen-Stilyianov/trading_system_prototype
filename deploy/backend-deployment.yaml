@@ -1,0 +1,6 @@
+# Inside deploy/backend-deployment.yaml
+envFrom:
+  - configMapRef:
+      name: trading-config
+  - secretRef:
+      name: trading-secrets

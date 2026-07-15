@@ -1,0 +1,57 @@
+networks:
+  trading_mesh:
+    driver: bridge
+
+volumes:
+  shared_logs:
+    driver: local
+
+services:
+  # 1. Microservice 1: The Core Async Execution Engine Daemon
+  backend-daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: trading_backend_daemon
+    restart: unless-stopped
+    networks:
+      - trading_mesh
+    ports:
+      - "8080:8080"
+    volumes:
+      - shared_logs:/app/logs
+      - .:/app # ◄─ Maps your host folder into the container for hot-reloading
+    # Replicate production Kubernetes ConfigMap/Secret variable injections
+    environment:
+      - APP_ENV=development
+      - LOG_LEVEL=INFO
+      - BROKER_ENV=paper
+      - BROKER_API_KEY=local_mock_developer_key_alpaca_93842
+      - BROKER_SECRET_KEY=local_mock_developer_secret_alpaca_23984
+      - TARGET_SYMBOL=AAPL
+      - DEFAULT_QTY=50
+      - RSI_PERIOD=14
+      - RSI_OVERBOUGHT=70.0
+      - RSI_OVERSOLD=30.0
+      - ML_CONFIDENCE_THRESHOLD=0.65
+
+  # 2. Microservice 2: The Streamlit Visual Frontend Interface Application
+  dashboard-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: trading_streamlit_ui
+    restart: unless-stopped
+    networks:
+      - trading_mesh
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app # ◄─ Maps your host folder into the container for hot-reloading UI code
+    # Ensure the frontend does not boot until the backend's port 8080 is open
+    depends_on:
+      - backend-daemon
+    environment:
+      # Instruct Streamlit to route API traffic to the backend service name on the mesh
+      - BACKEND_HOST=backend-daemon
+      - BACKEND_PORT=8080
