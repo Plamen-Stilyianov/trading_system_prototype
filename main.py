@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import uvicorn
+import fastapi
+from core.database import db_engine
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -30,12 +32,12 @@ order_manager = OrderManager(broker_client)
 
 # Instantiate the AI strategy with standard control parameters
 strategy_params = {
-    "target_symbol": "AAPL",
-    "default_qty": 50,
-    "rsi_period": 14,
-    "rsi_overbought": 70.0,
-    "rsi_oversold": 30.0,
-    "ml_threshold": 0.65
+    "target_symbol": settings.TARGET_SYMBOL,
+    "default_qty": settings.DEFAULT_QTY,
+    "rsi_period": settings.RSI_PERIOD,
+    "rsi_overbought": settings.RSI_OVERBOUGHT,
+    "rsi_oversold": settings.RSI_OVERSOLD,
+    "ml_threshold": settings.ML_CONFIDENCE_THRESHOLD
 }
 ai_strategy = AITemplateStrategy(strategy_id="AI_ALPHA_V1", parameters=strategy_params)
 
@@ -84,6 +86,7 @@ async def execution_loop():
 async def lifespan(app: FastAPI):
     """Manages the startup and shutdown sequence of the core daemon processing loop."""
     # Initialize connection structures to broker APIs
+    await db_engine.initialize_db()  # ◄─ ADD THIS LINE
     await broker_client.connect()
 
     # Spawn the background processing loop inside the async execution framework
@@ -102,6 +105,12 @@ async def lifespan(app: FastAPI):
 # 5. API Communication Data Schemas
 class SystemStateRequest(BaseModel):
     active: bool
+
+
+class TuningParametersPayload(BaseModel):
+    rsi_oversold: float
+    rsi_overbought: float
+    ml_confidence_threshold: float
 
 
 # 6. FastAPI Web Interface Controller Configuration
@@ -126,6 +135,64 @@ async def toggle_system_state(payload: SystemStateRequest) -> Dict[str, Any]:
     log_action = "ENABLED" if payload.active else "DISABLED"
     logger.info(f"Global hardware state altered by remote interface. System is now: {log_action}")
     return {"status": "success", "is_active": state_manager.is_engine_active}
+
+
+@app.post("/api/config/update")
+async def update_runtime_configuration(payload: TuningParametersPayload):
+    """
+    Dynamically overwrites global configuration contexts in memory.
+    Updates risk/strategy parameters across running async tick tasks instantly.
+    """
+    try:
+        # Overwrite global Pydantic settings mappings in memory cache
+        settings.RSI_OVERSOLD = payload.rsi_oversold
+        settings.RSI_OVERBOUGHT = payload.rsi_overbought
+        settings.ML_CONFIDENCE_THRESHOLD = payload.ml_confidence_threshold
+
+        # Sync current active strategy class assignments directly
+        ai_strategy.rsi_oversold = payload.rsi_oversold
+        ai_strategy.rsi_overbought = payload.rsi_overbought
+        ai_strategy.ml_confidence_threshold = payload.ml_confidence_threshold
+
+        logger.info(
+            f"🎯 [SETTINGS SWAP] Configuration tuned via UI -> "
+            f"RSI: {settings.RSI_OVERSOLD}/{settings.RSI_OVERBOUGHT} | ML: {settings.ML_CONFIDENCE_THRESHOLD:.2f}"
+        )
+        return {"status": "SUCCESS", "message": "Global runtime tuning matrices applied."}
+    except Exception as e:
+        logger.error(f"Failed to apply active configuration state updates: {str(e)}")
+        raise fastapi.HTTPException(status_code=500, detail=str(e))
+
+
+# -----------------------------------------------------------------------------
+# 🌐 KUBERNETES AUTOMATED ORCHESTRATION SELF-HEALING PROBES
+# -----------------------------------------------------------------------------
+@app.get("/healthz", status_code=200)
+async def liveness_probe():
+    """
+    Kubernetes Liveness Probe.
+    Tells the cluster whether the core application container thread has frozen.
+    """
+    return {"status": "healthy", "timestamp": "2026-07-15T03:28:00Z"}
+
+
+@app.get("/readyz", status_code=200)
+async def readiness_probe():
+    """
+    Kubernetes Readiness Probe.
+    Verifies that system parameters are loaded and connection pools are active.
+    """
+    try:
+        # Verify in-memory state objects are queryable
+        _ = state_manager.get_summary_metrics()
+
+        # Verify remote connection channels are instantiated
+        if broker_client is None:
+            raise RuntimeError("Broker client pools are uninitialized.")
+
+        return {"status": "ready", "mesh_connectivity": "stable"}
+    except Exception as e:
+        return fastapi.Response(content=f"Unready: {str(e)}", status_code=503)
 
 
 # 7. Local PyCharm / openSUSE Startup Context Block

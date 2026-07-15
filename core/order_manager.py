@@ -1,8 +1,10 @@
 import logging
+import asyncio  # ✅ FIX 1: Added missing async framework core import
 from typing import Dict, Any
 from core.state_manager import state_manager
 from core.broker_client import BrokerClient
 from core.risk_manager import RiskManager
+from core.database import db_engine
 
 logger = logging.getLogger("TradingEngine.OrderManager")
 
@@ -11,7 +13,7 @@ class OrderManager:
     """
     Validates structural signals, routes trades to active execution brokers,
     and coordinates transactional states with the thread-safe telemetry store.
-    Integrates a strict pre-trade risk management validation layer.
+    Integrates a strict pre-trade risk management validation layer and async logging.
     """
 
     def __init__(self, broker_client: BrokerClient):
@@ -62,6 +64,10 @@ class OrderManager:
                     "ORDER",
                     f"Execution Filled! ID: {fill_receipt['order_id']} | {action} {actual_qty} {symbol} @ ${exec_price}"
                 )
+
+                # ✅ FIX 2: Moved database tracking write task here AFTER receipt is generated
+                asyncio.create_task(db_engine.save_receipt(fill_receipt))
+
                 return True
 
         except Exception as e:

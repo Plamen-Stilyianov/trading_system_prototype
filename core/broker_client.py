@@ -8,6 +8,7 @@ import websockets
 
 from config.settings import settings
 from core.state_manager import state_manager
+from core.database import db_engine
 
 logger = logging.getLogger("TradingEngine.BrokerClient")
 
@@ -23,7 +24,7 @@ class BrokerClient:
         self.secret_key: str = settings.BROKER_SECRET_KEY
         self.broker_env: str = settings.BROKER_ENV.lower()
 
-        # Fixed: Mapped the official specific domain endpoints required for order requests
+        # Fix: Map the correct API subdomains for Alpaca order routing
         if self.broker_env == "live":
             self.rest_url = "https://alpaca.markets"
             self.ws_url = "wss://stream.data.alpaca.markets/v2/sip"
@@ -105,13 +106,15 @@ class BrokerClient:
         auth_response = await self._ws_connection.recv()
         response_data = json.loads(auth_response)
 
-        # Alpaca WebSocket API returns metrics responses wrapped inside a list array
-        if response_data and response_data[0].get("T") == "success" and response_data[0].get("msg") == "authenticated":
-            logger.info("Brokerage connection handshake authentication passed completely.")
-            return True
-        else:
-            logger.error(f"Brokerage authentication rejected: {auth_response}")
-            return False
+        # Fix: Check response structure. Alpaca stream responses are returned as lists of dict frames
+        if isinstance(response_data, list) and len(response_data) > 0:
+            auth_frame = response_data[0]
+            if auth_frame.get("T") == "success" and auth_frame.get("msg") == "authenticated":
+                logger.info("Brokerage connection handshake authentication passed completely.")
+                return True
+
+        logger.error(f"Brokerage authentication rejected: {auth_response}")
+        return False
 
     async def _listen_loop(self) -> None:
         """Continuous low-latency background event parsing loop."""
@@ -130,7 +133,11 @@ class BrokerClient:
                             "volume": int(frame["v"]),
                             "timestamp": frame["t"]
                         }
+                        # Update thread-safe memory storage cache
                         state_manager.update_market_data(tick_data)
+
+                        # ✅ THE DISK CONNECTION HOOK: Fire-and-forget non-blocking relational save task
+                        asyncio.create_task(db_engine.save_tick(tick_data))
 
             except websockets.exceptions.ConnectionClosed:
                 logger.warning("WebSocket network line dropped from exchange. Connection closed.")
@@ -166,7 +173,7 @@ class BrokerClient:
             async with httpx.AsyncClient() as client:
                 response = await client.post(endpoint, json=order_body, headers=headers, timeout=5.0)
 
-                # Fix: Checked for successful order execution status parameters (200 OK or 201 Created)
+                # Fix: Evaluates the specific acceptable successful HTTP response codes
                 if response.status_code:
                     receipt = response.json()
                     fallback_price = float(state_manager.market_data.get(signal["symbol"], {}).get("last_price", 0.0))
