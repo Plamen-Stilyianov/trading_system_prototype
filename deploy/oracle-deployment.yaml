@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: trading-db-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: oci-bv  # Instructs OCI to provision an Oracle Block Volume automatically
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-daemon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-daemon
+  template:
+    metadata:
+      labels:
+        app: backend-daemon
+    spec:
+      imagePullSecrets:
+        - name: ocir-secret  # References the Yahoo login secret we verified in terminal
+      containers:
+      - name: backend
+        image: iad.ocir.io/idqcoec1tv4k/trading-system/backend:latest
+        ports:
+        - containerPort: 8000
+        volumeMounts:
+        - name: db-volume
+          mountPath: /app/logs  # Maps your SQLite persistent data engine ledger to OCI storage
+      volumes:
+      - name: db-volume
+        persistentVolumeClaim:
+          claimName: trading-db-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dashboard-ui
+  template:
+    metadata:
+      labels:
+        app: dashboard-ui
+    spec:
+      imagePullSecrets:
+        - name: ocir-secret
+      containers:
+      - name: dashboard
+        image: iad.ocir.io/idqcoec1tv4k/trading-system/dashboard:latest
+        ports:
+        - containerPort: 8501
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard-lb
+spec:
+  type: LoadBalancer  # Triggers the automated provisioning of an Oracle Cloud Public Load Balancer
+  ports:
+  - port: 80
+    targetPort: 8501
+  selector:
+    app: dashboard-ui
