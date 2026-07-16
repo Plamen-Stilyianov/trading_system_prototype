@@ -24,12 +24,12 @@ class BrokerClient:
         self.secret_key: str = settings.BROKER_SECRET_KEY
         self.broker_env: str = settings.BROKER_ENV.lower()
 
-        # Fix: Map the correct API subdomains for Alpaca order routing
+        # Inside __init__ in core/broker_client.py
         if self.broker_env == "live":
-            self.rest_url = "https://alpaca.markets"
+            self.rest_url = "https://api.alpaca.markets"
             self.ws_url = "wss://stream.data.alpaca.markets/v2/sip"
         else:
-            self.rest_url = "https://alpaca.markets"
+            self.rest_url = "https://paper-api.alpaca.markets"  # ◄─ Update this
             self.ws_url = "wss://stream.data.alpaca.markets/v2/test"
 
         self._ws_connection: Optional[websockets.WebSocketClientProtocol] = None
@@ -204,7 +204,8 @@ class BrokerClient:
             "APCA-API-KEY-ID": self.api_key,
             "APCA-API-SECRET-KEY": self.secret_key
         }
-        endpoint = f"{self.rest_url}/account"
+        # Inside get_account_summary in core/broker_client.py
+        endpoint = f"{self.rest_url}/v2/account"  # ◄─ Add /v2/ here
 
         try:
             async with httpx.AsyncClient() as client:
@@ -225,19 +226,17 @@ class BrokerClient:
             logger.error(f"Network error pulling account parameters from gateway: {str(e)}")
             return {"balance": 10000.0, "equity": 10000.0, "status": "MOCKED_ERROR"}
 
+    # Inside get_latest_tick in core/broker_client.py
     async def get_latest_tick(self, symbol: str) -> Dict[str, Any]:
-        """
-        Retrieves the latest processed market tick frame for a target asset ticker.
-        """
-        # Fallback to streaming cache data inside state_manager if historical feed stalls
         cached_tick = state_manager.market_data.get(symbol)
         if cached_tick:
             return cached_tick
 
-        # Basic data placeholder format matching main.py loop expectations
+        # Ensure "symbol" is present in the dictionary response block
         return {
             "symbol": symbol,
-            "last_price": 150.00,  # Default starter seed price value
+            "last_price": 150.00,
             "volume": 100,
             "timestamp": datetime.utcnow().isoformat() + "Z"
         }
+

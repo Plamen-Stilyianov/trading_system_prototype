@@ -28,9 +28,25 @@ spec:
         - name: ocir-secret  # References the Yahoo login secret we verified in terminal
       containers:
       - name: backend
-        image: iad.ocir.io/idqcoec1tv4k/trading-system/backend:latest
+        image: iad.ocir.io/idqcoec1tv4k/trading-system/backend:v4  # Explicit tag update to override legacy versions
         ports:
         - containerPort: 8000
+        env:
+        - name: BROKER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: trading-env-secret
+              key: BROKER_API_KEY
+        - name: BROKER_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: trading-env-secret
+              key: BROKER_SECRET_KEY
+        - name: BROKER_ENV
+          valueFrom:
+            secretKeyRef:
+              name: trading-env-secret
+              key: BROKER_ENV
         volumeMounts:
         - name: db-volume
           mountPath: /app/logs  # Maps your SQLite persistent data engine ledger to OCI storage

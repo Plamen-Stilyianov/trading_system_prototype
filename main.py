@@ -197,5 +197,6 @@ async def readiness_probe():
 
 # 7. Local PyCharm / openSUSE Startup Context Block
 if __name__ == "__main__":
-    # Host on port 8080 inside the internal backend infrastructure mesh network
-    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=False)
+    # Change "main:app" to app directly to bypass filesystem string scanning
+    uvicorn.run(app, host="0.0.0.0", port=8080)
+
