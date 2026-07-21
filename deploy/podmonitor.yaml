@@ -1,0 +1,20 @@
+apiVersion: ://coreos.com
+kind: PodMonitor
+metadata:
+  name: backend-daemon-monitor
+  namespace: trading-desk
+  labels:
+    release: prometheus
+spec:
+  namespaceSelector:
+    matchNames:
+      - trading-desk
+  selector:
+    matchLabels:
+      app: backend-daemon
+  podMetricsEndpoints:
+  - port: http-metrics
+    targetPort: 8080
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s

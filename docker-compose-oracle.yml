@@ -5,26 +5,26 @@ networks:
 volumes:
   shared_logs:
     driver: local
+  trading_db_data:
+    driver: local
 
 services:
   # 1. Microservice 1: The Core Async Execution Engine Daemon
   backend-daemon:
-    build:
-      context: .
-      dockerfile: Dockerfile.backend
+    image: iad.ocir.io/idqcoec1tv4k/trading-system/backend:v7-multiarch
     container_name: trading_backend_daemon
-    restart: unless-stopped
+    restart: always
     networks:
       - trading_mesh
     ports:
       - "8080:8080"
     volumes:
       - shared_logs:/app/logs
-      - .:/app # Maps your host folder into the container for hot-reloading
+      - trading_db_data:/app/data
     env_file:
-      - .env # ◄─ Dynamically binds your host's verified .env parameters
+      - .env
     environment:
-      - APP_ENV=development
+      - APP_ENV=production
       - LOG_LEVEL=INFO
       - BROKER_ENV=paper
       - TARGET_SYMBOL=AAPL
@@ -36,21 +36,17 @@ services:
 
   # 2. Microservice 2: The Streamlit Visual Frontend Interface Application
   dashboard-ui:
-    build:
-      context: .
-      dockerfile: Dockerfile.dashboard
+    image: iad.ocir.io/idqcoec1tv4k/trading-system/dashboard:v7-multiarch
     container_name: trading_streamlit_ui
-    restart: unless-stopped
+    restart: always
     networks:
       - trading_mesh
     ports:
       - "8501:8501"
-    volumes:
-      - .:/app # Maps your host folder into the container for hot-reloading UI code
     depends_on:
       - backend-daemon
     env_file:
-      - .env # ◄─ Keeps frontend and backend global system states in sync
+      - .env
     environment:
       - BACKEND_HOST=backend-daemon
       - BACKEND_PORT=8080

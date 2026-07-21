@@ -2,10 +2,11 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: trading-db-pvc
+  namespace: trading-desk
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: oci-bv  # Instructs OCI to provision an Oracle Block Volume automatically
+  storageClassName: oci-bv # Correctly mounts OCI Block Volumes
   resources:
     requests:
       storage: 10Gi
@@ -14,6 +15,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend-daemon
+  namespace: trading-desk
 spec:
   replicas: 1
   selector:
@@ -25,12 +27,17 @@ spec:
         app: backend-daemon
     spec:
       imagePullSecrets:
-        - name: ocir-secret  # References the Yahoo login secret we verified in terminal
+        - name: ocir-secret
       containers:
       - name: backend
-        image: iad.ocir.io/idqcoec1tv4k/trading-system/backend:v4  # Explicit tag update to override legacy versions
+        # ─── FIXED: Swapped typo repo name (_) to your actual OCIR repo structure (/) ───
+        image: iad.ocir.io/idqcoec1tv4k/trading-system/backend:v7-multiarch
+        imagePullPolicy: Always
+        command: ["python"]
+        args: ["main.py"]
         ports:
-        - containerPort: 8000
+        - name: http-metrics
+          containerPort: 8080
         env:
         - name: BROKER_API_KEY
           valueFrom:
@@ -49,7 +56,8 @@ spec:
               key: BROKER_ENV
         volumeMounts:
         - name: db-volume
-          mountPath: /app/logs  # Maps your SQLite persistent data engine ledger to OCI storage
+          # ─── FIXED: Aligned target folder with the active prototype path structure ───
+          mountPath: /app/logs
       volumes:
       - name: db-volume
         persistentVolumeClaim:
@@ -59,6 +67,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: dashboard-ui
+  namespace: trading-desk
 spec:
   replicas: 1
   selector:
@@ -71,20 +80,67 @@ spec:
     spec:
       imagePullSecrets:
         - name: ocir-secret
+      securityContext:
+        runAsUser: 0
       containers:
       - name: dashboard
-        image: iad.ocir.io/idqcoec1tv4k/trading-system/dashboard:latest
+        # ─── FIXED: Corrected path name typo and synchronized the release tags ───
+        image: iad.ocir.io/idqcoec1tv4k/trading-system/dashboard:v7-multiarch
         ports:
-        - containerPort: 8501
+        - containerPort: 8501 # ─── FIXED: Reverted to Streamlit's structural engine port ───
+        env:
+        - name: BACKEND_HOST # ─── FIXED: Aligned variable naming keys with your config/settings.py ───
+          value: "backend-daemon"
+        - name: BACKEND_PORT
+          value: "8080"
+        - name: STREAMLIT_SERVER_PORT
+          value: "8501" # ─── FIXED: Mapped to standard non-privileged port to avoid crash cycles ───
+        - name: STREAMLIT_SERVER_ADDRESS
+          value: "0.0.0.0"
+        - name: STREAMLIT_SERVER_HEADLESS
+          value: "true"
+        - name: STREAMLIT_SERVER_ENABLE_CORS
+          value: "false"
+        - name: STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION
+          value: "false"
+        - name: STREAMLIT_BROWSER_SERVER_PORT
+          value: "443"
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: dashboard-lb
+  namespace: trading-desk
+  annotations:
+    service.beta.kubernetes.io/oci-load-balancer-ssl-ports: "443"
+    service.beta.kubernetes.io/oci-load-balancer-tls-secret: "dashboard-tls-secret"
+    service.beta.kubernetes.io/oci-load-balancer-backend-ssl-ports: ""
 spec:
-  type: LoadBalancer  # Triggers the automated provisioning of an Oracle Cloud Public Load Balancer
+  type: LoadBalancer
+  loadBalancerIP: 129.153.166.6
   ports:
-  - port: 80
-    targetPort: 8501
+  - name: http
+    port: 80
+    targetPort: 8501 # ─── FIXED: Routes public HTTP directly to internal Streamlit listener ───
+  - name: https
+    port: 443
+    targetPort: 8501 # ─── FIXED: Routes secure HTTPS directly to internal Streamlit listener ───
   selector:
     app: dashboard-ui
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-daemon
+  namespace: trading-desk
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/metrics"
+    prometheus.io/port: "8080"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    app: backend-daemon

@@ -30,7 +30,7 @@ class BrokerClient:
             self.ws_url = "wss://stream.data.alpaca.markets/v2/sip"
         else:
             self.rest_url = "https://paper-api.alpaca.markets"  # ◄─ Update this
-            self.ws_url = "wss://stream.data.alpaca.markets/v2/test"
+            self.ws_url = "wss://stream.data.alpaca.markets/v2/iex"
 
         self._ws_connection: Optional[websockets.WebSocketClientProtocol] = None
         self._listener_task: Optional[asyncio.Task] = None
@@ -48,7 +48,14 @@ class BrokerClient:
 
             auth_success = await self._authenticate_websocket()
             if not auth_success:
+                logger.warning('WebSocket authentication failed. Retrying in 30 seconds...')
                 await self.disconnect()
+                await asyncio.sleep(30)
+                # Clear connection status flags and attempt reconnection
+                self.is_connected = False
+                await asyncio.sleep(1)
+                asyncio.create_task(self.connect())
+                return
                 return
 
             self._listener_task = asyncio.create_task(self._listen_loop())

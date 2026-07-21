@@ -1,18 +1,28 @@
 FROM python:3.12-slim
-WORKDIR /app
+WORKDIR /workspace
 
-# Install standard system requirements
+# 1. Install system requirements and C-compilers needed for ML wheels (like xgboost)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    gcc \
+    g++ \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install your Python packages (including pandas-ta-classic) via pip wheels
+# 2. Layer caching optimization for Python packages
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy over the project files
+# 3. Copy over all active workspace repository folders
 COPY . .
+
+# 4. Explicitly create vital persistent runtime tracking paths
+RUN mkdir -p logs assets
 
 ENV PYTHONUNBUFFERED=1
 
+# 5. Expose your production port matching your readiness probes
+EXPOSE 8080
+
+# 6. Execute directly via the native Python module block to match your script's entrypoint
 CMD ["python", "main.py"]
