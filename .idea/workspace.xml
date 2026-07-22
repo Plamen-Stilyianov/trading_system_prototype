@@ -4,13 +4,7 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="b963d588-6ded-4bc5-abfe-fcb62ba8d96f" name="Changes" comment="committing working versions: local opensuse thumbleweed and on Oracle Cloud Infrastructure (OCI)">
-      <change afterPath="$PROJECT_DIR$/deploy/crypto-patch.yaml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/tests/test_crypto_stream.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/workflows/deploy.yml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/core/risk_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/core/risk_manager.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/dashboard/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/dashboard/app.py" afterDir="false" />
-    </list>
+    <list default="true" id="b963d588-6ded-4bc5-abfe-fcb62ba8d96f" name="Changes" comment="added worflow CI/CD" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -85,7 +79,7 @@
     "RunOnceActivity.git.unshallow": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
     "codeWithMe.voiceChat.enabledByDefault": "false",
-    "git-widget-placeholder": "master",
+    "git-widget-placeholder": "main",
     "last_opened_file_path": "/home/orajava/.kube/config",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
@@ -268,7 +262,7 @@
       <workItem from="1784665219500" duration="78000" />
       <workItem from="1784665307200" duration="12000" />
       <workItem from="1784665328930" duration="1763000" />
-      <workItem from="1784667363611" duration="15126000" />
+      <workItem from="1784667363611" duration="15874000" />
     </task>
     <task id="LOCAL-00001" summary="first working version">
       <option name="closed" value="true" />
@@ -302,7 +296,15 @@
       <option name="project" value="LOCAL" />
       <updated>1784676632499</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="added worflow CI/CD">
+      <option name="closed" value="true" />
+      <created>1784682990789</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1784682990789</updated>
+    </task>
+    <option name="localTasksCounter" value="6" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -324,7 +326,8 @@
     <MESSAGE value="refactored broker_client.py and added oracle-deployment.yaml" />
     <MESSAGE value="refactored broker_client.py, main.py, env and added oracle-deployment.yaml" />
     <MESSAGE value="committing working versions: local opensuse thumbleweed and on Oracle Cloud Infrastructure (OCI)" />
-    <option name="LAST_COMMIT_MESSAGE" value="committing working versions: local opensuse thumbleweed and on Oracle Cloud Infrastructure (OCI)" />
+    <MESSAGE value="added worflow CI/CD" />
+    <option name="LAST_COMMIT_MESSAGE" value="added worflow CI/CD" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/trading_system_prototype$pytest_in_test_alpaca_local_py.coverage" NAME="pytest in test_alpaca_local.py Coverage Results" MODIFIED="1784668957794" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
