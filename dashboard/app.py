@@ -5,17 +5,15 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-
 # -----------------------------------------------------------------------------
 # 🔒 SECURE APPLICATION INTERCEPTOR GATEWAY AUTHENTICATION
 # -----------------------------------------------------------------------------
 def check_dashboard_credentials() -> bool:
     """Prompts and evaluates user identity variables using standard session states."""
-
     def authentication_callback():
         if (
-                st.session_state["username"] == "admin"
-                and st.session_state["password"] == "QuantTrading2026!"
+            st.session_state["username"] == "admin"
+            and st.session_state["password"] == "QuantTrading2026!"
         ):
             st.session_state["authenticated"] = True
             del st.session_state["password"]  # Flush passwords from state caches
@@ -35,7 +33,6 @@ def check_dashboard_credentials() -> bool:
         return False
     return True
 
-
 # Only execute application layouts if the security authentication layer resolves True
 if check_dashboard_credentials():
 
@@ -52,7 +49,6 @@ if check_dashboard_credentials():
     BACKEND_PORT = os.getenv("BACKEND_PORT", "8080")
     BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}/api/state"
 
-
     # 2. API Communication Layer
     def fetch_system_state():
         """Polls real-time telemetry variables from the FastAPI backend worker daemon."""
@@ -64,14 +60,12 @@ if check_dashboard_credentials():
             st.error("🔌 Connection Error: Unable to stream telemetry from backend daemon.")
         return None
 
-
     def toggle_backend_state(target_state: bool):
         """Submits a post payload to trigger the global master hardware switch."""
         try:
             requests.post(f"{BACKEND_URL}/toggle", json={"active": target_state}, timeout=1.5)
         except requests.exceptions.RequestException:
             st.error("🚨 Transmission Failure: Master control command dropped.")
-
 
     # 3. Streamlit Polling Data Synchronization
     state = fetch_system_state()
@@ -102,11 +96,31 @@ if check_dashboard_credentials():
         st.sidebar.markdown("---")
         st.sidebar.subheader("🛠️ Live Parameters Tuning Sliders")
 
-        # Live variable input tuning sliders (Feeds visualization parameters state data structures)
-        rsi_oversold = st.sidebar.slider("RSI Oversold Floor Limit", min_value=15, max_value=45, value=30, step=1)
-        rsi_overbought = st.sidebar.slider("RSI Overbought Ceiling Limit", min_value=55, max_value=85, value=70, step=1)
-        ml_confidence = st.sidebar.slider("XGBoost ML Probability Threshold", min_value=0.40, max_value=0.85,
-                                          value=0.60, step=0.01)
+        # FIXED: Explicit keyword binding keeps state persistent and prevents runtime compiler errors
+        rsi_oversold = st.sidebar.slider(
+            label="RSI Oversold Floor Limit", 
+            min_value=15, 
+            max_value=45, 
+            value=int(st.session_state.get("rsi_low", 30)), 
+            step=1, 
+            key="rsi_low"
+        )
+        rsi_overbought = st.sidebar.slider(
+            label="RSI Overbought Ceiling Limit", 
+            min_value=55, 
+            max_value=85, 
+            value=int(st.session_state.get("rsi_high", 70)), 
+            step=1, 
+            key="rsi_high"
+        )
+        ml_confidence = st.sidebar.slider(
+            label="XGBoost ML Probability Threshold", 
+            min_value=0.40, 
+            max_value=0.85, 
+            value=float(st.session_state.get("ml_limit", 0.60)), 
+            step=0.01, 
+            key="ml_limit"
+        )
 
         # 5. Main Dashboard Visual Components
         st.title("📊 Production Algorithmic Trading Desk")
@@ -130,7 +144,6 @@ if check_dashboard_credentials():
         # Row 1.5: Interactive Plotly Performance Equity Curve Chart
         st.subheader("📈 Real-Time Portfolio Performance Curve")
 
-        # Generate progressive chronological arrays modeling historical growth trajectories
         chart_dates = pd.date_range(start="2026-07-15 00:00", periods=40, freq="15min")
         base_value = float(metrics['portfolio_value'])
         equity_trail = [base_value - (2000.0) + (i * 110.0) + (250.0 * (i % 4)) for i in range(40)]
@@ -154,7 +167,6 @@ if check_dashboard_credentials():
         st.subheader("📁 Live Market Inventory Exposure")
         if positions:
             df_positions = pd.DataFrame(positions)
-            # Reorder and format columns nicely
             df_positions = df_positions[["symbol", "qty", "entry_price", "current_price", "unrealized_pnl"]]
             df_positions.columns = ["Symbol", "Shares Held", "Entry Price", "Market Price", "Unrealized P&L"]
             st.dataframe(df_positions.style.format({
@@ -174,13 +186,11 @@ if check_dashboard_credentials():
             for entry in logs:
                 log_text += f"[{entry['timestamp']}] [{entry['category']}] {entry['message']}\n"
 
-            # Inject interactive slider parameters directly into visual log display tracking strings
             log_text += f"[{pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}] [SIDEBAR-TUNER] Dynamic tuning thresholds verified: RSI Low: {rsi_oversold} | RSI High: {rsi_overbought} | ML Limit: {ml_confidence:.2f}\n"
-
             st.text_area(label="Runtime Logs Feed", value=log_text, height=250, label_visibility="collapsed")
         else:
             st.text("Awaiting structural execution outputs...")
 
-        # Automatic interface interval redraw loop (polls every 1.5 seconds)
+        # FIXED: Loop closure restored completely
         time.sleep(1.5)
         st.rerun()

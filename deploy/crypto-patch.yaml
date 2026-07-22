@@ -1,0 +1,26 @@
+spec:
+  #  FIXED: Moved to the root spec layer to prevent duplicate container limits
+  strategy:
+    type: Recreate
+  template:
+    spec:
+      containers:
+      - name: backend
+        env:
+        - name: TARGET_SYMBOL
+          value: "BTC/USD"
+        - name: BROKER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: trading-env-secret
+              key: BROKER_API_KEY
+        - name: BROKER_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: trading-env-secret
+              key: BROKER_SECRET_KEY
+        - name: BROKER_ENV
+          valueFrom:
+            secretKeyRef:
+              name: trading-env-secret
+              key: BROKER_ENV

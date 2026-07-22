@@ -1,0 +1,67 @@
+name: Production Trading Infrastructure CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ] # Triggers the automation mesh on every push to main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: 1. Checkout Source Code Repository
+      uses: actions/checkout@v4
+
+    - name: 2. Initialize QEMU Multi-Arch Emulators
+      uses: actions/setup-qemu-action@v3
+
+    - name: 3. Initialize Docker Buildx Instance
+      uses: actions/setup-buildx-action@v3
+
+    - name: 4. Authenticate with Oracle Cloud Registry (OCIR)
+      uses: docker/login-action@v3
+      with:
+        registry: iad.ocir.io
+        username: "idqcoec1tv4k/plamen_stilyianov@yahoo.com"
+        password: ${{ secrets.OCI_AUTH_TOKEN }} # Secure token drawn from repository vaults
+
+    - name: 5. Cross-Compile & Push Multi-Arch Backend Daemon
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: Dockerfile.backend
+        platforms: linux/amd64,linux/arm64
+        tags: iad.ocir.io/idqcoec1tv4k/trading-system/backend:v7-multiarch
+        push: true
+
+    - name: 6. Cross-Compile & Push Multi-Arch Stateful Dashboard UI
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: Dockerfile.dashboard
+        platforms: linux/amd64,linux/arm64
+        tags: iad.ocir.io/idqcoec1tv4k/trading-system/dashboard:v7-multiarch
+        push: true
+
+    - name: 7. Configure OCI Kubernetes CLI Environment Access
+      uses: oracle-actions/setup-oci-cli@v1.3.0
+      with:
+        user: ${{ secrets.OCI_USER_OCID }}
+        tenancy: ${{ secrets.OCI_TENANCY_OCID }}
+        fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+        key: ${{ secrets.OCI_PRIVATE_KEY }}
+        region: "us-ashburn-1"
+
+    - name: 8. Download Cluster Kubeconfig Framework Profile
+      run: |
+        mkdir -p $HOME/.kube
+        oci ce cluster create-kubeconfig \
+          --cluster-id ${{ secrets.OCI_OKE_CLUSTER_ID }} \
+          --file $HOME/.kube/config \
+          --region us-ashburn-1 \
+          --token-version 2.0.0
+
+    - name: 9. Execute Rolling Pod Restarts inside OCI OKE Cluster
+      run: |
+        kubectl rollout restart deployment/backend-daemon -n trading-desk
+        kubectl rollout restart deployment/dashboard-ui -n trading-desk
+        kubectl rollout status deployment/backend-daemon -n trading-desk --timeout=90s
