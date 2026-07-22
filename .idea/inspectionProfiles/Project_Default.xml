@@ -1,0 +1,70 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="DuplicatedCode" enabled="true" level="WEAK WARNING" enabled_by_default="true">
+      <Languages>
+        <language minSize="164" name="Python" />
+      </Languages>
+    </inspection_tool>
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="arviz" />
+          <option value="basemap" />
+          <option value="copulae" />
+          <option value="copulas" />
+          <option value="costcla" />
+          <option value="ctgan" />
+          <option value="gap" />
+          <option value="gap-stat" />
+          <option value="graphviz" />
+          <option value="hmmlearn" />
+          <option value="missingno" />
+          <option value="mpl-toolkits.clifford" />
+          <option value="numpy-financial" />
+          <option value="pandas-datareader" />
+          <option value="pmdarima" />
+          <option value="portfoliolab" />
+          <option value="py4j" />
+          <option value="pyensae" />
+          <option value="pymc3" />
+          <option value="pyportfolioopt" />
+          <option value="scikit-image" />
+          <option value="sklearn-som" />
+          <option value="table-evaluator" />
+          <option value="tables" />
+          <option value="xgboost" />
+          <option value="yellowbrick" />
+          <option value="pyflux" />
+          <option value="cvxpy" />
+          <option value="pydot" />
+          <option value="nasdaqdatalink" />
+          <option value="l0bnb" />
+          <option value="torchinfo" />
+        </list>
+      </option>
+    </inspection_tool>
+    <inspection_tool class="PyPep8NamingInspection" enabled="true" level="WEAK WARNING" enabled_by_default="true">
+      <option name="ignoredErrors">
+        <list>
+          <option value="N802" />
+        </list>
+      </option>
+    </inspection_tool>
+    <inspection_tool class="PyStubPackagesAdvertiser" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="scipy-stubs==1.16.1.0" />
+          <option value="pandas-stubs==2.3.0.250703" />
+        </list>
+      </option>
+    </inspection_tool>
+    <inspection_tool class="PyUnresolvedReferencesInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredIdentifiers">
+        <list>
+          <option value="float.*" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>
