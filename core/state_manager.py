@@ -16,20 +16,24 @@ class StateManager:
     def __init__(self):
         # Operational Thread Locks guarding structural mutations
         self._lock = threading.Lock()
-
-        # Engine Master Controls
         self.is_engine_active: bool = False
 
-        # Live Balance & Equity Telemetry
-        self.balance: float = 100000.00
-        self.equity: float = 100000.00
-        self.daily_pnl: float = 0.00
-        self.initial_day_balance: float = 100000.00
+        # ─── 🍏 NEW: MULTI-ASSET TRACKING PROPERTIES ───
+        # Default starting basket profile array list
+        self.tracked_symbols: List[str] = ["AAPL", "SPY"]
 
-        # Structural Collections
+        self.balance: float = 0.00
+        self.equity: float = 0.00
+        self.daily_pnl: float = 0.00
+        self.initial_day_balance: float = None
         self.positions: Dict[str, Dict[str, Any]] = {}
         self.market_data: Dict[str, Dict[str, Any]] = {}
         self._system_logs: List[Dict[str, Any]] = []
+
+    def set_tracked_symbols(self, symbols_list: List[str]) -> None:
+        """Thread-safe setter to update the active asset tracking array matrix."""
+        with self._lock:
+            self.tracked_symbols = symbols_list
 
     def set_engine_activity(self, active: bool) -> None:
         """Globally flips the execution switch (Start/Stop button toggles)."""
@@ -43,8 +47,19 @@ class StateManager:
     def update_account(self, account_info: Dict[str, Any]) -> None:
         """Updates core structural portfolio values directly from broker payloads."""
         with self._lock:
-            self.balance = account_info.get("cash_balance", self.balance)
-            self.equity = account_info.get("portfolio_value", self.equity)
+            # ─── 🛡️ MAP RAW ALPACA KEY PATTERNS TO INTERNAL TELEMETRY ───
+            # Checks for 'cash' or 'cash_balance' / 'equity' or 'portfolio_value' automatically
+            self.balance = float(account_info.get("cash", account_info.get("cash_balance", self.balance)))
+            self.equity = float(account_info.get("equity", account_info.get("portfolio_value", self.equity)))
+
+            # ─── 🎯 SELF-CALIBRATING DAY-START STABILIZER ───
+            # If this is the first API synchronization check since container boot,
+            # anchor the baseline metrics to your real Alpaca initial day parameters
+            if self.initial_day_balance is None:
+                # Uses your real Alpaca last_equity value ($995,395.55) from the wire!
+                self.initial_day_balance = float(account_info.get("last_equity", self.equity))
+
+            # Calculate accurate profit/loss performance deltas based on reality
             self.daily_pnl = self.equity - self.initial_day_balance
 
     def update_market_data(self, tick: Dict[str, Any]) -> None:
@@ -106,11 +121,12 @@ class StateManager:
     def get_summary_metrics(self) -> Dict[str, Any]:
         """Generates clean operational telemetry payloads for visual analytics components."""
         with self._lock:
+            starting_line = self.initial_day_balance if self.initial_day_balance else self.equity
             return {
                 "cash_balance": self.balance,
                 "portfolio_value": self.equity,
                 "daily_pnl": self.daily_pnl,
-                "roi_percentage": (self.daily_pnl / self.initial_day_balance) * 100 if self.initial_day_balance else 0.0,
+                "roi_percentage": (self.daily_pnl / starting_line) * 100 if starting_line else 0.0,
                 "active_positions_count": len(self.positions)
             }
 

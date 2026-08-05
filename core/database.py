@@ -15,53 +15,56 @@ class TradingDatabase:
         """Creates the relational storage schema tables if they do not exist."""
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         async with aiosqlite.connect(DB_PATH) as db:
-            # 1. Historical Candlestick Tick Telemetry Table
+            # 1. LIVE TRADING TICKS (Kept lightweight for the UI)
             await db.execute("""
                              CREATE TABLE IF NOT EXISTS market_ticks
                              (
-                                 id
-                                 INTEGER
-                                 PRIMARY
-                                 KEY
-                                 AUTOINCREMENT,
-                                 timestamp
-                                 TEXT,
-                                 symbol
-                                 TEXT,
-                                 last_price
-                                 REAL,
-                                 volume
-                                 INTEGER
+                                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                                 timestamp  TEXT,
+                                 symbol     TEXT,
+                                 last_price REAL,
+                                 volume     INTEGER
                              )
                              """)
-            # 2. Transactional Trade Order Receipts Ledger Table
+
+            # 2. NEW: DEEP HISTORICAL TRAINING DATA FOR XGBOOST WARMUP
+            await db.execute("""
+                             CREATE TABLE IF NOT EXISTS historical_ticks
+                             (
+                                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                                 timestamp  TEXT UNIQUE,
+                                 symbol     TEXT,
+                                 last_price REAL,
+                                 volume     INTEGER
+                             )
+                             """)
+
+            # 3. Transactional Trade Order Receipts Ledger Table
             await db.execute("""
                              CREATE TABLE IF NOT EXISTS trade_receipts
                              (
-                                 id
-                                 INTEGER
-                                 PRIMARY
-                                 KEY
-                                 AUTOINCREMENT,
-                                 order_id
-                                 TEXT
-                                 UNIQUE,
-                                 timestamp
-                                 TEXT,
-                                 symbol
-                                 TEXT,
-                                 action
-                                 TEXT,
-                                 quantity
-                                 INTEGER,
-                                 execution_price
-                                 REAL,
-                                 status
-                                 TEXT
+                                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                                 order_id        TEXT UNIQUE,
+                                 timestamp       TEXT,
+                                 symbol          TEXT,
+                                 action          TEXT,
+                                 quantity        INTEGER,
+                                 execution_price REAL,
+                                 status          TEXT
                              )
                              """)
             await db.commit()
+
+            # ─── 🔍 ADDED: PROGRAMMATIC TABLE AUDIT LOG PRINTOUT ───
+            # Query SQLite's internal master table directory
+            async with db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';") as cursor:
+                rows = await cursor.fetchall()
+                # Extract the table name strings into a clean list format
+                active_tables = [row[0] for row in rows]
+
         logger.info(f"💾 Async SQLite Persistent Engine initialized safely at {DB_PATH}")
+        logger.info(f"📂 Verified Active Database Tables List: {active_tables}")
 
     async def save_tick(self, tick: Dict[str, Any]):
         """Asynchronously writes a streaming candle update row to the disk partition."""

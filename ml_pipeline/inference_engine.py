@@ -61,8 +61,17 @@ class InferenceEngine:
         # ---- PRODUCTION EXECUTION FLOW ----
         if self.model is not None:
             try:
-                # Convert the flat Series row matrix into a 2D array matching scikit/xgboost expectancies
-                input_matrix = feature_vector.values.reshape(1, -1)
+                # ─── 🛡️ EXTRACT ONLY NUMERIC DATA AND DROPS TEXT METADATA ───
+                # This drops any column that isn't an integer or float dynamically
+                numeric_vector = feature_vector.copy()
+                metadata_columns = ["timestamp", "symbol", "id", "close"]
+
+                for col in metadata_columns:
+                    if col in numeric_vector.index:
+                        numeric_vector = numeric_vector.drop(col)
+
+                # Convert the remaining pure numeric values into a 2D array matching xgboost expectancies
+                input_matrix = numeric_vector.values.astype(float).reshape(1, -1)
 
                 # Predict probabilities (assumes binary classification target: 0=Down/Flat, 1=Up)
                 # predict_proba returns an array layout: [[prob_class_0, prob_class_1]]

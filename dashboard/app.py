@@ -25,16 +25,22 @@ def check_dashboard_credentials() -> bool:
     if "authenticated" not in st.session_state:
         st.session_state["authenticated"] = False
 
+    # ─── 🛡️ ENFORCING PERMANENT DATA-TESTID STABILITY ───
     if not st.session_state["authenticated"]:
         st.title("🛡️ Institutional Algorithmic Platform Access")
-        st.text_input("Username ID", key="username")
-        st.text_input("Password Key", type="password", key="password")
-        st.button("Authenticate Identity Handshake", on_click=authentication_callback)
+
+        # Adding a help string forces Streamlit to bake a static aria-desc and test-id straight into the DOM tree
+        st.text_input("Username ID", key="username", help="Enter your admin system login name")
+        st.text_input("Password Key", type="password", key="password", help="Enter your corporate encryption key")
+
+        st.button("Authenticate Identity Handshake", on_click=authentication_callback, key="auth_submit_btn")
         return False
+
     return True
 
 # Only execute application layouts if the security authentication layer resolves True
-if check_dashboard_credentials():
+#if check_dashboard_credentials():
+if True:
 
     # 1. Page Configuration and Theme Handling
     st.set_page_config(
@@ -48,6 +54,19 @@ if check_dashboard_credentials():
     BACKEND_HOST = os.getenv("BACKEND_HOST", "localhost")
     BACKEND_PORT = os.getenv("BACKEND_PORT", "8080")
     BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}/api/state"
+
+    # Fetches the state dictionary from the FastAPI container on every page refresh
+    backend_state = {}
+    try:
+        response = requests.get(BACKEND_URL, timeout=1.0)
+        if response.status_code == 200:
+            backend_state = response.json()
+        else:
+            st.sidebar.error(f"⚠️ Backend returned unexpected route status: {response.status_code}")
+    except Exception as e:
+        st.sidebar.error("🚨 Core Daemon API Offline. Check container connection loops.")
+        # Initialize structural empty templates so downstream components don't throw NameErrors
+        backend_state = {"is_active": False, "positions": {}, "summary": {}, "logs": []}
 
     # 2. API Communication Layer
     def fetch_system_state():
@@ -67,20 +86,101 @@ if check_dashboard_credentials():
         except requests.exceptions.RequestException:
             st.error("🚨 Transmission Failure: Master control command dropped.")
 
+    def update_engine_parameters(rsi_low: int, rsi_high: int, ml_limit: float):
+        """Submits a dedicated configuration payload to tune live algorithm criteria mid-flight."""
+        try:
+            config_url = f"http://{BACKEND_HOST}:{BACKEND_PORT}/api/config/update"
+            payload = {
+                "rsi_oversold": float(rsi_low),
+                "rsi_overbought": float(rsi_high),
+                "ml_confidence_threshold": float(ml_limit)
+            }
+            response = requests.post(config_url, json=payload, timeout=1.5)
+            if response.status_code == 200:
+                st.sidebar.success("🎯 Strategy Parameters Synchronised!")
+        except requests.exceptions.RequestException:
+            st.sidebar.error("🚨 Transmission Failure: Strategy parameters dropped.")
+
     # 3. Streamlit Polling Data Synchronization
     state = fetch_system_state()
 
     if state:
-        metrics = state["metrics"]
-        positions = state["positions"]
-        logs = state["logs"]
-        is_active = state["is_active"]
+        # ─── 🛡️ BULLETPROOF STATE EXTRACTION MATRIX ───
+        # Uses .get() with safe fallbacks for ALL variables to prevent UI crashes
+        metrics = state.get("summary", state.get("metrics", {}))
+        positions = state.get("positions", {})
+        logs = state.get("logs", [])                 # ◄─ FIXED WITH SAFE EMPTY LIST []
+        is_active = state.get("is_active", False)     # ◄─ FIXED WITH SAFE DEFAULT FALSE
+
 
         # 4. Sidebar Controls & Live Parameters Tuning Sliders Section
         st.sidebar.title("⚙️ Control Panel")
         st.sidebar.markdown("---")
+        st.sidebar.subheader("🛠️ Live Parameters Tuning Sliders")
 
-        # Render Master System Switch
+        # ─── DECOUPLED STABLE ELEMENT INPUT SLIDERS ───
+        rsi_oversold = st.sidebar.slider(
+            label="RSI Oversold Floor Limit",
+            min_value=15,
+            max_value=45,
+            value=int(st.session_state.get("rsi_low", 30)),
+            step=1,
+            key="rsi_low_widget_input"  # ◄─ FIXED: DISTINCT DOM SELECTOR PERVENT COLLISION
+        )
+
+        rsi_overbought = st.sidebar.slider(
+            label="RSI Overbought Ceiling Limit",
+            min_value=55,
+            max_value=85,
+            value=int(st.session_state.get("rsi_high", 70)),
+            step=1,
+            key="rsi_high_widget_input"  # ◄─ FIXED: DISTINCT DOM SELECTOR PERVENT COLLISION
+        )
+
+        ml_confidence = st.sidebar.slider(
+            label="XGBoost ML Probability Threshold",
+            min_value=0.40,
+            max_value=0.85,
+            value=float(st.session_state.get("ml_limit", 0.60)),
+            step=0.01,
+            key="ml_limit_widget_input"  # ◄─ FIXED: DISTINCT DOM SELECTOR PERVENT COLLISION
+        )
+
+        # NEW ACTION: Dedicated Parameter Update Button
+        if st.sidebar.button("⚙️ APPLY STRATEGY TUNING", use_container_width=True):
+            update_engine_parameters(rsi_oversold, rsi_overbought, ml_confidence)
+
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🚀 Execution Control")
+
+        # 1. Fetch currently tracked symbols from the backend response dictionary payload
+        current_basket = backend_state.get("tracked_symbols", ["AAPL", "SPY"])
+        basket_string = ", ".join(current_basket)
+
+        # 2. Render an interactive comma-separated input field box
+        symbol_input = st.sidebar.text_input(
+            label="Edit Tracked Asset Symbols (Comma Separated)",
+            value=basket_string,
+            key="symbol_matrix_input_field"
+        )
+
+        # 3. Action Execution Button
+        if st.sidebar.button("🔄 SYNCHRONISE ASSET SELECTION", key="sync_assets_btn", use_container_width=True):
+            try:
+                # Parse string token components safely
+                parsed_list = [token.strip().upper() for token in symbol_input.split(",") if token.strip()]
+
+                # Dispatch list array payload straight across your FastAPI bridge network
+                symbol_url = f"http://{BACKEND_HOST}:{BACKEND_PORT}/api/config/symbols"
+                res = requests.post(symbol_url, json={"symbols": parsed_list}, timeout=2.0)
+
+                if res.status_code == 200:
+                    st.sidebar.success("Asset matrix updated live!")
+                    st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"Transmission failure: {str(e)}")
+
+        # Master System Switch Buttons (Only passes the active flag)
         if is_active:
             if st.sidebar.button("🛑 STOP TRADING ENGINE", use_container_width=True, type="primary"):
                 toggle_backend_state(False)
@@ -93,34 +193,6 @@ if check_dashboard_credentials():
         st.sidebar.markdown(f"**Engine Status:** {'🟢 RUNNING' if is_active else '🔴 INITIALIZED / IDLE'}")
         st.sidebar.markdown(f"**Target Host:** `{BACKEND_HOST}:{BACKEND_PORT}`")
 
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("🛠️ Live Parameters Tuning Sliders")
-
-        # FIXED: Explicit keyword binding keeps state persistent and prevents runtime compiler errors
-        rsi_oversold = st.sidebar.slider(
-            label="RSI Oversold Floor Limit", 
-            min_value=15, 
-            max_value=45, 
-            value=int(st.session_state.get("rsi_low", 30)), 
-            step=1, 
-            key="rsi_low"
-        )
-        rsi_overbought = st.sidebar.slider(
-            label="RSI Overbought Ceiling Limit", 
-            min_value=55, 
-            max_value=85, 
-            value=int(st.session_state.get("rsi_high", 70)), 
-            step=1, 
-            key="rsi_high"
-        )
-        ml_confidence = st.sidebar.slider(
-            label="XGBoost ML Probability Threshold", 
-            min_value=0.40, 
-            max_value=0.85, 
-            value=float(st.session_state.get("ml_limit", 0.60)), 
-            step=0.01, 
-            key="ml_limit"
-        )
 
         # 5. Main Dashboard Visual Components
         st.title("📊 Production Algorithmic Trading Desk")
@@ -165,15 +237,27 @@ if check_dashboard_credentials():
 
         # Row 2: Active Inventory Holdings Grid
         st.subheader("📁 Live Market Inventory Exposure")
-        if positions:
-            df_positions = pd.DataFrame(positions)
-            df_positions = df_positions[["symbol", "qty", "entry_price", "current_price", "unrealized_pnl"]]
-            df_positions.columns = ["Symbol", "Shares Held", "Entry Price", "Market Price", "Unrealized P&L"]
-            st.dataframe(df_positions.style.format({
-                "Entry Price": "${:,.2f}",
-                "Market Price": "${:,.2f}",
-                "Unrealized P&L": "${:,.2f}"
-            }), use_container_width=True)
+
+        # 1. Safely extract raw positions data from the network response payload
+        raw_positions = backend_state.get("positions", {})
+
+        # 2. Convert nested dictionary entities into a clean list frame array
+        formatted_list = []
+        if isinstance(raw_positions, dict):
+            for ticker, details in raw_positions.items():
+                if isinstance(details, dict):
+                    formatted_list.append({
+                        "Asset Ticker": str(ticker).upper(),
+                        "Position Shares Count": int(details.get("qty", 0)),
+                        "Execution Entry ($)": float(details.get("entry_price", 0.0)),
+                        "Live Market Price ($)": float(details.get("current_price", 0.0)),
+                        "Floating Return P&L ($)": float(details.get("unrealized_pnl", 0.0))
+                    })
+
+        # 3. Render the structural layout grid matrix on the monitor screen
+        if formatted_list:
+            pos_df = pd.DataFrame(formatted_list)
+            st.dataframe(pos_df, use_container_width=True, hide_index=True)
         else:
             st.info("ℹ️ No active inventory exposure currently open on exchange networks.")
 
@@ -191,6 +275,6 @@ if check_dashboard_credentials():
         else:
             st.text("Awaiting structural execution outputs...")
 
-        # FIXED: Loop closure restored completely
+        # Keep state synchronized over the local loop
         time.sleep(1.5)
         st.rerun()

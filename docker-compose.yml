@@ -7,7 +7,7 @@ volumes:
     driver: local
 
 services:
-  # 1. Microservice 1: The Core Async Execution Engine Daemon
+  # ─── SERVICE 1: CORE ENGINE (Starts only after history is verified) ───
   backend-daemon:
     build:
       context: .
@@ -20,21 +20,41 @@ services:
       - "8080:8080"
     volumes:
       - shared_logs:/app/logs
-      - .:/app # Maps your host folder into the container for hot-reloading
+      - .:/app
     env_file:
-      - .env # ◄─ Dynamically binds your host's verified .env parameters
+      - .env
     environment:
+      - BACKEND_HOST=0.0.0.0
       - APP_ENV=development
       - LOG_LEVEL=INFO
-      - BROKER_ENV=paper
-      - TARGET_SYMBOL=AAPL
-      - DEFAULT_QTY=50
-      - RSI_PERIOD=14
-      - RSI_OVERBOUGHT=70.0
-      - RSI_OVERSOLD=30.0
-      - ML_CONFIDENCE_THRESHOLD=0.65
+    depends_on:
+      historical-data-seeder:
+        condition: service_completed_successfully # Waits for data seeding to finish
+    cpuset: "2,3"
+    ulimits:
+      memlock: -1
+      rtprio: 99
+    cap_add:
+      - SYS_NICE
+    init: true
 
-  # 2. Microservice 2: The Streamlit Visual Frontend Interface Application
+  # ─── SERVICE 2: THE AUTOMATED HISTORY INJECTOR (New) ───
+  historical-data-seeder:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: trading_historical_seeder
+    networks:
+      - trading_mesh
+    volumes:
+      - shared_logs:/app/logs
+      - .:/app
+    env_file:
+      - .env
+    # Overrides the default runtime application launch command to run your safe seeder script
+    command: ["python", "-m", "research.seed_historical_yfinance"]
+
+  # ─── SERVICE 3: USER INTERFACE DASHBOARD ───
   dashboard-ui:
     build:
       context: .
@@ -46,11 +66,12 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - .:/app # Maps your host folder into the container for hot-reloading UI code
+      - .:/app
     depends_on:
       - backend-daemon
     env_file:
-      - .env # ◄─ Keeps frontend and backend global system states in sync
+      - .env
     environment:
       - BACKEND_HOST=backend-daemon
       - BACKEND_PORT=8080
+    cpuset: "0,1"

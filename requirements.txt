@@ -11,6 +11,9 @@ pandas==2.2.3
 numpy==2.1.2
 pydantic-settings==2.5.2
 
+# Financial data source
+yfinance
+
 # Native Technical Analysis - No C-Compiler Required!
 pandas-ta-classic==0.6.52
 

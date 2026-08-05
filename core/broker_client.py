@@ -24,6 +24,10 @@ class BrokerClient:
         self.secret_key: str = settings.BROKER_SECRET_KEY
         self.broker_env: str = settings.BROKER_ENV.lower()
 
+        key_snippet = self.api_key[:6] if self.api_key else "NONE"
+        logger.info(
+            f"🔍 [AUTH DEBUG] Envoy Target: {self.broker_env.upper()} | Key Starts With: {key_snippet} | Full Length: {len(self.api_key) if self.api_key else 0}")
+
         # Inside __init__ in core/broker_client.py
         if self.broker_env == "live":
             self.rest_url = "https://api.alpaca.markets"
@@ -206,32 +210,55 @@ class BrokerClient:
     async def get_account_summary(self) -> Dict[str, Any]:
         """
         Fetches live account balance metadata from the Alpaca REST API.
+        Transforms raw payload parameters dynamically into type-safe numeric maps.
         """
         headers = {
             "APCA-API-KEY-ID": self.api_key,
             "APCA-API-SECRET-KEY": self.secret_key
         }
-        # Inside get_account_summary in core/broker_client.py
-        endpoint = f"{self.rest_url}/v2/account"  # ◄─ Add /v2/ here
+        endpoint = f"{self.rest_url}/v2/account"
 
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(endpoint, headers=headers, timeout=5.0)
+
                 if response.status_code == 200:
                     account_data = response.json()
-                    # Standardize format for your state_manager object
+
+                    # ─── 📡 🎯 DETAILED INBOUND REST DATA DEBUG LOGGER ───
+                    # Prints exactly what the raw JSON wire looks like inside your console
+                    logger.info("📡 [REST REST INBOUND ACCOUNT PAYLOAD] Fetched from Alpaca gateway:")
+                    logger.info(f"    ↳ Raw JSON: {account_data}")
+
+                    # Extract values safely, defaulting to 0.0 if missing
+                    cash_val = float(account_data.get("cash", 0.0))
+                    portfolio_value = float(account_data.get("portfolio_value", 0.0))
+                    equity_val = float(account_data.get("equity", 0.0))
+                    last_equity_val = float(account_data.get("last_equity", equity_val))
+
+                    # ─── 🛡️ DUAL-KEY NAME MAP ALIGNMENT PASSTHROUGH ───
+                    # Compiles a complete tracking dictionary matching ALL internal app lookups
                     return {
-                        "balance": float(account_data.get("cash", 0.0)),
-                        "equity": float(account_data.get("equity", 0.0)),
-                        "currency": "USD",
-                        "status": account_data.get("status", "ACTIVE")
+                        "cash": cash_val,
+                        "cash_balance": cash_val,
+                        "balance": cash_val,
+                        "equity": equity_val,
+                        "portfolio_value": portfolio_value,
+                        "last_equity": last_equity_val,
+                        "status": account_data.get("status", "ACTIVE"),
+                        "currency": account_data.get("currency", "USD")
                     }
                 else:
-                    logger.error(f"Failed to fetch account metrics: {response.text}")
-                    return {"balance": 10000.0, "equity": 10000.0, "status": "MOCKED_FALLBACK"}
+                    logger.error(f"❌ REST API gateway rejected authentication handshake. Text: {response.text}")
+                    # Raise an exception rather than returning fake mock metrics
+                    raise httpx.HTTPStatusError(
+                        message=f"Alpaca API returned status code {response.status_code}",
+                        request=response.request,
+                        response=response
+                    )
         except Exception as e:
-            logger.error(f"Network error pulling account parameters from gateway: {str(e)}")
-            return {"balance": 10000.0, "equity": 10000.0, "status": "MOCKED_ERROR"}
+            logger.error(f"❌ Critical failure pulling live account parameters from Alpaca gateway: {str(e)}")
+            raise e
 
     # Inside get_latest_tick in core/broker_client.py
     async def get_latest_tick(self, symbol: str) -> Dict[str, Any]:
@@ -247,3 +274,18 @@ class BrokerClient:
             "timestamp": datetime.utcnow().isoformat() + "Z"
         }
 
+
+data = {'id': '3ae5b50c-21e7-4d6d-b586-1e49b238d8d5', 'admin_configurations': {},
+        'user_configurations': {'dtbp_check': 'entry', 'fractional_trading': True, 'max_margin_multiplier': '4',
+                                'pdt_check': 'entry', 'trade_confirm_email': 'all'}, 'account_number': 'PA3M0YUGQM21',
+        'status': 'ACTIVE', 'crypto_status': 'ACTIVE', 'options_approved_level': 3, 'options_trading_level': 3,
+        'currency': 'USD', 'buying_power': '3706817.92', 'regt_buying_power': '1825095.41',
+        'effective_buying_power': '3706817.92', 'non_marginable_buying_power': '912547.7',
+        'options_buying_power': '912547.7', 'cash': '877155.76', 'accrued_fees': '0', 'portfolio_value': '997189.38',
+        'trading_blocked': False, 'transfers_blocked': False, 'account_blocked': False,
+        'created_at': '2026-04-23T19:08:23.456523Z', 'trade_suspended_by_user': False, 'multiplier': '4',
+        'shorting_enabled': True, 'equity': '997189.38', 'last_equity': '995395.54941146027',
+        'long_market_value': '120033.62', 'short_market_value': '0', 'position_market_value': '120033.62',
+        'initial_margin': '35391.94', 'maintenance_margin': '21235.17', 'last_maintenance_margin': '20772.36',
+        'sma': '947394.34', 'balance_asof': '2026-08-03', 'crypto_tier': 1, 'intraday_adjustments': '0',
+        'pending_reg_taf_fees': '0'}

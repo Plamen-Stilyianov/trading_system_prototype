@@ -2,6 +2,7 @@
 import asyncio
 import pandas as pd
 from config.settings import settings
+from datetime import datetime
 from research.data_loader import HistoricalDataLoader
 from research.backtester import EventDrivenBacktester
 
@@ -16,7 +17,8 @@ async def execute_sandbox_run():
 
     # Generate temporary mock historical price variables
     # (Or replace with: df = loader.load_from_csv("path/to/historical_data.csv"))
-    dates = pd.date_range(start="2026-01-01", periods=100, freq="5min")
+    start_date = datetime.today().date().strftime("%Y-%m-%d")
+    dates = pd.date_range(start=start_date, periods=100, freq="5min")
     mock_data = {
         "open": [170.0 + i * 0.1 for i in range(100)],
         "high": [171.0 + i * 0.1 for i in range(100)],

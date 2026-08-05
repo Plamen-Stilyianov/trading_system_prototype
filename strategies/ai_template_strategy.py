@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 from typing import Dict, Any, Optional
 import pandas as pd
 
@@ -8,6 +9,8 @@ import pandas_ta_classic as ta
 # Internal absolute project architecture imports
 from strategies.base_strategy import BaseStrategy
 from ml_pipeline.inference_engine import InferenceEngine
+from core.state_manager import state_manager
+
 
 logger = logging.getLogger("TradingEngine.AI_Strategy")
 
@@ -15,8 +18,8 @@ logger = logging.getLogger("TradingEngine.AI_Strategy")
 class AITemplateStrategy(BaseStrategy):
     """
     A concrete implementation of BaseStrategy.
-    Uses pandas-ta-classic to generate indicators purely in native Python.
-    No underlying C-compilers or .tar.gz assets required.
+    Extracts historical ticks from the SQLite ledger, computes technical indicators
+    via pandas-ta-classic, and validates trades using the XGBoost inference layer.
     """
 
     def __init__(self, strategy_id: str, parameters: Dict[str, Any]):
@@ -51,8 +54,12 @@ class AITemplateStrategy(BaseStrategy):
         return df
 
     def on_market_tick(self, tick_data: Dict[str, Any], current_position: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Processes real-time streaming pricing updates."""
+        """Processes real-time streaming pricing updates for emergency stops."""
         if not self.is_enabled:
+            return None
+
+            # ─── 🛡️ FIXED: GENTLE NONE-TYPE SAFETY GUARD GATEWALK ───
+        if tick_data is None or not isinstance(tick_data, dict):
             return None
 
         symbol = tick_data.get("symbol")
@@ -62,6 +69,7 @@ class AITemplateStrategy(BaseStrategy):
         try:
             if has_position:
                 if last_price < current_position.get("stop_loss_price", 0.0):
+                    logger.warning(f"🚨 [STOP LOSS] Last price {last_price} dropped below floor. Liquidating {symbol}.")
                     return self._create_signal(symbol, action="SELL", qty=current_position["qty"])
         except Exception as e:
             logger.error(f"Error executing live tick calculations inside {self.strategy_id}: {str(e)}")
@@ -70,8 +78,8 @@ class AITemplateStrategy(BaseStrategy):
 
     def on_interval_check(self, current_positions: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Triggers on data bars (e.g., 5-minute candle close).
-        Combines pandas-ta indicators and ML inferences to generate orders.
+        Triggers on data bars.
+        Queries local database logs, computes technical metrics, and runs machine learning inference.
         """
         if not self.is_enabled:
             return None
@@ -80,31 +88,83 @@ class AITemplateStrategy(BaseStrategy):
         position_details = current_positions.get(symbol, {"qty": 0})
         has_position = position_details.get("qty", 0) > 0
 
-        # Ingest historical array feeds (Passed mock empty state or filled by runner)
+        # ─── 💾 CONNECT AND EXTRACT HISTORICAL LEDGER STREAM FROM SQLITE ───
+        db_path = "logs/trading_data.db"
         raw_df = pd.DataFrame()
-        if raw_df.empty:
+
+        try:
+            with sqlite3.connect(db_path) as conn:
+                query = f"""
+                    SELECT timestamp, last_price as close, volume 
+                    FROM historical_ticks 
+                    WHERE symbol = '{symbol}' 
+                    ORDER BY timestamp DESC 
+                    LIMIT 100
+                """
+                raw_df = pd.read_sql_query(query, conn)
+                if not raw_df.empty:
+                    raw_df = raw_df.iloc[::-1].reset_index(drop=True)
+        except Exception as e:
+            logger.error(f"[{self.strategy_id}] Failed to extract historical rows: {str(e)}")
             return None
 
+        # ─── 🔍 STEP 1: PROGRAMMATIC DATA AUDIT PRINTOUT ───
+        logger.info(
+            f"📊 [STRATEGY DB AUDIT] Successfully extracted {len(raw_df)} rows from historical_ticks for {symbol}.")
+        if not raw_df.empty:
+            logger.info(f"   ↳ Earliest row: {raw_df['timestamp'].iloc[0]} | Price: {raw_df['close'].iloc[0]}")
+            logger.info(f"   ↳ Latest row:   {raw_df['timestamp'].iloc[-1]} | Price: {raw_df['close'].iloc[-1]}")
+
+        # Safety Gate: Ensure the system database has captured enough records to generate indicators and lags
+        if raw_df.empty or len(raw_df) < max(self.rsi_period, 6):
+            logger.warning(f"[{self.strategy_id}] Awaiting rows. Count: {len(raw_df)}/{max(self.rsi_period, 6)}")
+            return None
+
+        # ─── 🤖 STEP 2: TECHNICAL FEATURE GENERATION ───
         engineered_df = self.generate_features(raw_df)
         latest_row = engineered_df.iloc[-1]
-
         current_rsi = latest_row["rsi"]
-        ml_prediction_prob = self.ml_engine.predict_next_move(latest_row)
 
-        # BUY LOGIC: Oversold conditions paired with highly confident ML direction metrics
+        # Guard against NaN/Null indicator outputs during early database accumulation windows
+        if pd.isna(current_rsi) or pd.isna(latest_row["sma_fast"]) or pd.isna(latest_row["sma_slow"]):
+            logger.debug(f"[{self.strategy_id}] Indicators contain uncalculated metrics. Skipping pipeline iteration.")
+            return None
+
+        # ─── 🛡️ STEP 3: CONSTRUCT THE CHRONOLOGICAL 6-INTERVAL LAG FEATURE VECTOR ───
+        ml_features = pd.Series({
+            "lag_5": float(engineered_df["close"].iloc[-6]),  # 25 minutes ago
+            "lag_4": float(engineered_df["close"].iloc[-5]),  # 20 minutes ago
+            "lag_3": float(engineered_df["close"].iloc[-4]),  # 15 minutes ago
+            "lag_2": float(engineered_df["close"].iloc[-3]),  # 10 minutes ago
+            "lag_1": float(engineered_df["close"].iloc[-2]),  # 5 minutes ago
+            "lag_0": float(engineered_df["close"].iloc[-1])   # Price right now (lag_0)
+        })
+
+        # Request structural directional probability from your type-safe XGBoost engine layer
+        ml_prediction_prob = self.ml_engine.predict_next_move(ml_features)
+
+
+        logger.info(
+            f"🧠 [STRATEGY AI MATRIX] Calculated RSI: {current_rsi:.2f} | XGBoost Buy Prob: {ml_prediction_prob:.2f}")
+
+        # ─── 🚀 STEP 4: EXECUTION MATRIX LOGIC GATES ───
+
+        # BUY TRIGGER CONDITIONS: Oversold asset criteria paired with high ML prediction confidence
         if not has_position:
             if current_rsi < self.rsi_oversold and ml_prediction_prob >= self.ml_confidence_threshold:
                 logger.info(
-                    f"[{self.strategy_id}] BUY signal identified for {symbol}. RSI: {current_rsi:.2f}, ML Prob: {ml_prediction_prob:.2f}")
-                return self._create_signal(symbol, action="BUY", qty=self.parameters.get("default_qty", 100))
+                    f"🟢 [{self.strategy_id}] BUY signal identified for {symbol}. RSI: {current_rsi:.2f} (< {self.rsi_oversold}), ML Confidence: {ml_prediction_prob:.2f} (>= {self.ml_confidence_threshold})")
+                return self._create_signal(symbol, action="BUY", qty=self.parameters.get("default_qty", 50))
 
-        # SELL LOGIC: Reaching overbought standard parameters
+        # SELL TRIGGER CONDITIONS: Reaching overbought technical limits to secure simulation gains
         elif has_position:
             if current_rsi > self.rsi_overbought:
-                logger.info(f"[{self.strategy_id}] SELL exit signal identified for {symbol}. RSI: {current_rsi:.2f}")
+                logger.info(
+                    f"🔴 [{self.strategy_id}] SELL profit-taking signal identified for {symbol}. RSI: {current_rsi:.2f} (> {self.rsi_overbought})")
                 return self._create_signal(symbol, action="SELL", qty=position_details["qty"])
 
         return None
+
 
     def _create_signal(self, symbol: str, action: str, qty: int) -> Dict[str, Any]:
         """Utility construction helper mapping output frames back to core/order_manager.py"""
