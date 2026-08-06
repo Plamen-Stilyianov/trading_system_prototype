@@ -1,131 +1,106 @@
 import os
-import sqlite3
 import logging
-import yfinance as yf
+import sqlite3
 import pandas as pd
+import yfinance as yf
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("DataPipeline.SafeSeeder")
+# Configure structured telemetry logs early so we catch any errors!
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logger = logging.getLogger("TradingEngine.HistoricalSeeder")
 
-DB_PATH = "logs/trading_data.db"
-TARGET_SYMBOL = "AAPL"
+# ─── 🛡️ SECURED DYNAMIC PARAMETERS GATE ───
+try:
+    from config.settings import settings
+    DEFAULT_WATCHLIST_FALLBACK = list(settings.DEFAULT_WATCHLIST) if settings.DEFAULT_WATCHLIST else ["AAPL", "NVDA", "SPY"]
+except Exception as config_err:
+    logger.warning(f"⚠️ AppSettings load deferred during data injection (using system baselines): {config_err}")
+    DEFAULT_WATCHLIST_FALLBACK = ["AAPL", "NVDA", "SPY"]
+
+DB_PATH = "/app_storage/trading_data.db"
 
 
-def populate_historical_if_empty(symbol: str):
-    """
-    Checks the database first. Extracts and seeds historical bars from Yahoo Finance
-    ONLY if the historical_ticks table contains no records for the targeted symbol.
-    """
-    logger.info(f"🗄️ Verifying storage engine partition integrity at: {DB_PATH}")
+def seed_historical_market_data():
+    """Reads your dynamic configuration watchlist and downloads lookback bars from Yahoo Finance."""
+    logger.info("🧬 Starting automated historical data seeder pipeline...")
+
+    # ✅ Uses our hardened configuration properties fallback baseline
+    target_symbols = DEFAULT_WATCHLIST_FALLBACK
+    logger.info(f"📋 Watchlist selected for historical injection: {target_symbols}")
+
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL;")
 
-        # 1. Structural table schema setup
-        cursor.execute("""
-                       CREATE TABLE IF NOT EXISTS historical_ticks
-                       (
-                           id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                           timestamp  TEXT UNIQUE,
-                           symbol     TEXT,
-                           last_price REAL,
-                           volume     INTEGER
-                       )
-                       """)
-        conn.commit()
-    except Exception as e:
-        logger.error(f"❌ Structural schema validation failed: {str(e)}")
-        return
+            cursor.execute("""
+                           CREATE TABLE IF NOT EXISTS historical_ticks
+                           (
+                               id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                               timestamp  TEXT,
+                               symbol     TEXT,
+                               last_price REAL,
+                               volume     INTEGER,
+                               UNIQUE (timestamp, symbol)
+                           )
+                           """)
 
-    # 2. DATA EXISTENCE SAFETY CHECK
-    try:
-        cursor.execute("SELECT COUNT(*) FROM historical_ticks WHERE symbol = ?", (symbol,))
-        row_count = cursor.fetchone()[0]
+            for symbol in target_symbols:
+                symbol = str(symbol).strip().upper()
+                logger.info(f"🔍 Auditing ledger logs database records for ticker: '{symbol}'")
 
-        if row_count > 0:
-            logger.info(
-                f"🛑 [SAFE STOP] Historical database already contains {row_count} data bars for '{symbol}'. Skipping download to protect existing records.")
-            conn.close()
-            return
+                cursor.execute("SELECT COUNT(*) FROM historical_ticks WHERE symbol = ?", (symbol,))
+                if cursor.fetchone()[0] > 0:
+                    logger.info(f"🛑 [SAFE SKIP] Table already contains records for '{symbol}'. Skipping download.")
+                    continue
 
-        logger.info(f"🔍 Ledger is empty for '{symbol}'. Initiating data collection sequence...")
-    except Exception as e:
-        logger.error(f"❌ Failed to verify existing data rows: {str(e)}")
-        conn.close()
-        return
+                logger.info(f"📡 Downloading 1 month of 5m bars from Yahoo Finance for: {symbol}")
+                df = yf.download(symbol, period="1mo", interval="5m")
 
-    # 3. Extract historical data from yfinance
-    logger.info(f"📥 Requesting historical arrays from Yahoo Finance for '{symbol}' (60 Days @ 5m intervals)...")
-    try:
-        df = yf.download(tickers=symbol, period="60d", interval="5m", auto_adjust=True)
-        if df.empty:
-            logger.error(f"❌ yfinance returned an empty dataset.")
-            conn.close()
-            return
-    except Exception as e:
-        logger.error(f"❌ Network extraction layer encountered a failure: {str(e)}")
-        conn.close()
-        return
+                if df.empty:
+                    logger.warning(f"⚠️ Yahoo Finance API returned empty dataframe for symbol: {symbol}")
+                    continue
 
-    # 4. Clean, flatten, and transform data streams
-    try:
-        # ─── FIXED: FLATTEN MULTIINDEX TUPLES BEFORE PARSING ───
-        if isinstance(df.columns, pd.MultiIndex):
-            # If the column header is a tuple like ('Close', 'AAPL'), extract just the string component 'Close'
-            df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+                logger.info(f"⚙️ Raw Columns Detected: {df.columns.tolist()}")
 
-        df = df.reset_index()
+                # ─── 🛡️ THE DEFINITIVE MULTI-LEVEL HEADERS FLATTENER ───
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = [col[0] for col in df.columns]
 
-        # Isolate the index column keys regardless of case profile alterations
-        time_col = next((col for col in df.columns if str(col).lower() in ["datetime", "date", "timestamp"]), None)
-        close_col = next((col for col in df.columns if "close" in str(col).lower()), None)
-        volume_col = next((col for col in df.columns if "volume" in str(col).lower()), None)
+                logger.info(f"💾 Ingesting {len(df)} price rows into SQLite for '{symbol}'...")
 
-        if not time_col or not close_col or not volume_col:
-            raise KeyError(f"Could not resolve key mappings. Discovered columns: {list(df.columns)}")
+                success_count = 0
+                for idx, row in df.iterrows():
+                    ts_str = idx.strftime("%Y-%m-%d %H:%M:%S") if hasattr(idx, "strftime") else str(idx)
 
-        insert_records = []
-        for _, row in df.iterrows():
-            # Convert pandas Timestamp objects cleanly to an ISO text string
-            ts_str = str(row[time_col])
-            price = float(row[close_col])
-            vol = int(row[volume_col])
-            insert_records.append((ts_str, symbol, price, vol))
+                    try:
+                        price_val = float(row['Close'])
+                        volume_val = int(row['Volume'])
+                    except KeyError:
+                        price_val = float(row.get('Adj Close', row.get('Open', 0.0)))
+                        volume_val = int(row.get('Volume', 0))
 
-    except Exception as e:
-        logger.error(f"❌ Data payload processing failure: {str(e)}")
-        conn.close()
-        return
+                    if price_val == 0.0:
+                        continue
 
-    # 5. Safe Bulk Insertion Block
-    try:
-        cursor.executemany("""
-                           INSERT OR IGNORE INTO historical_ticks (timestamp, symbol, last_price, volume)
-                           VALUES (?, ?, ?, ?)
-                           """, insert_records)
-        conn.commit()
+                    try:
+                        cursor.execute("""
+                                       INSERT OR IGNORE INTO historical_ticks (timestamp, symbol, last_price, volume)
+                                       VALUES (?, ?, ?, ?)
+                                       """, (ts_str, symbol, price_val, volume_val))
+                        success_count += 1
+                    except Exception:
+                        continue
 
-        cursor.execute("SELECT COUNT(*) FROM historical_ticks WHERE symbol = ?", (symbol,))
-        total_rows = cursor.fetchone()[0]
-        logger.info(f"🎉 Success! Database table populated with {total_rows} data bars for '{symbol}'.")
-    except Exception as e:
-        logger.error(f"❌ SQLite database write failure: {str(e)}")
-    finally:
-        conn.close()
+                logger.info(f"✅ Committed {success_count} data bars cleanly for '{symbol}'.")
+
+            conn.commit()
+            logger.info("📊 [LEDGER INJECTION SUCCESS] Historical seeder pipeline completed cleanly.")
+
+    except Exception as fatal_err:
+        logger.error(f"❌ Critical failure running history download matrix: {str(fatal_err)}")
 
 
 if __name__ == "__main__":
-    # ─── 🚀 CLOUD-HARDENED DYNAMIC SEEDER PASSTHROUGH ───
-    # Instead of hardcoding TARGET_SYMBOL = "AAPL", fetch your dynamic array rows matrix
-    try:
-        # Connect directly to your live state instance arrays or load the configuration JSON parameters
-        tracked_basket = state_manager.tracked_symbols
-    except Exception:
-        # Reliable baseline fallback if executed entirely out of application context
-        tracked_basket = ["AAPL", "SPY", "BTC-USD"]
-
-    logger.info(f"🧬 Cloud Database Initialization Sequence activated for basket: {tracked_basket}")
-    for asset_token in tracked_basket:
-        populate_historical_if_empty(symbol=asset_token)
+    seed_historical_market_data()

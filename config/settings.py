@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import List
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,8 +22,17 @@ class AppSettings(BaseSettings):
     BROKER_API_KEY: str = "development_mock_api_key_placeholder"
     BROKER_SECRET_KEY: str = "development_mock_secret_key_placeholder"
 
+    # LIVE ALPACA account
+    #ALPACA_REST_URL: str = "https://alpaca.markets"
+    #ALPACA_WS_URL: str = "wss://stream.data.alpaca.markets/v2/iex"
+
+    # PAPER ALPACA account
+    ALPACA_REST_URL: str = "https://paper-api.alpaca.markets"
+    ALPACA_WS_URL: str = "wss://stream.data.alpaca.markets/v2/iex"
+
     # 4. Global Baseline Strategy Risk Allocations
     TARGET_SYMBOL: str = "AAPL"
+    DEFAULT_WATCHLIST: List[str] = ["AAPL", "NVDA", "SPY"]
     DEFAULT_QTY: int = 50
     RSI_PERIOD: int = 14
     RSI_OVERBOUGHT: float = 70.0

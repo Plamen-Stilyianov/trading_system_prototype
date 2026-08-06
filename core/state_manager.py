@@ -80,10 +80,12 @@ class StateManager:
                 pos["current_price"] = current_price
                 pos["unrealized_pnl"] = (current_price - pos["entry_price"]) * pos["qty"]
 
-    def update_position_state(self, symbol: str, qty: int, entry_price: float) -> None:
+    # Inside core/state_manager.py -> Locate your update_position_state method block:
+    # ✅ COMPLIANCE FIX: Shifted qty type from int to float to natively support cryptocurrency fractions [INDEX]
+    def update_position_state(self, symbol: str, qty: float, entry_price: float) -> None:
         """Modifies active portfolio lists immediately following broker order confirmations."""
         with self._lock:
-            if qty <= 0:
+            if qty <= 0.0:
                 # Target inventory position completely closed
                 if symbol in self.positions:
                     closed_pos = self.positions.pop(symbol)
@@ -93,13 +95,13 @@ class StateManager:
                 # Add or adjust active holding parameters
                 self.positions[symbol] = {
                     "symbol": symbol,
-                    "qty": qty,
-                    "entry_price": entry_price,
-                    "current_price": entry_price,
+                    "qty": float(qty),  # ✅ Hard-cast to float to protect data layers consistency
+                    "entry_price": float(entry_price),
+                    "current_price": float(entry_price),
                     "unrealized_pnl": 0.0,
                     "updated_at": datetime.now().isoformat()
                 }
-                self._add_log_entry("ORDER", f"Position updated for {symbol}: {qty} shares @ ${entry_price:,.2f}")
+                self._add_log_entry("ORDER", f"Position updated for {symbol}: {qty:.4f} shares @ ${entry_price:,.2f}")
 
     def log_event(self, category: str, message: str) -> None:
         """Thread-safe public gateway to record runtime actions inside telemetry history."""

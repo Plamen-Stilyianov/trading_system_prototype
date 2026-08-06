@@ -7,12 +7,14 @@ fastapi==0.115.0
 uvicorn==0.32.0
 
 # Mathematical Engineering & Data Handling
-pandas==2.2.3
+pydantic>=2.0.0
+pandas>=2.0.0
 numpy==2.1.2
-pydantic-settings==2.5.2
+pydantic-settings>=2.0.0
+aiosqlite>=0.19.0
 
 # Financial data source
-yfinance
+yfinance>=0.2.30
 
 # Native Technical Analysis - No C-Compiler Required!
 pandas-ta-classic==0.6.52

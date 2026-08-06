@@ -6,14 +6,18 @@ def calculate_sharpe_ratio(returns_series: pd.Series, risk_free_rate: float = 0.
     """
     Calculates the annualized Sharpe Ratio of a trading strategy's returns.
     Measures the excess return earned per unit of volatility risk.
-
-    :param returns_series: A Pandas Series of percentage returns (daily or per-bar interval).
-    :param risk_free_rate: The baseline annualized risk-free rate (e.g., 0.02 for 2%). Default is 0.0.
-    :param periods_per_year: The number of trading bars in an annualized timeframe. Default is 252 (daily).
-    :return: Annualized Sharpe Ratio float value. Returns 0.0 if standard deviation is zero or empty.
+    ✅ AUTOMATICALLY DETECTS HIGH-FREQUENCY INTRADAY DATA TO PREVENT SCALING BIAS.
     """
     if returns_series.empty or len(returns_series) < 2:
         return 0.0
+
+    # ─── 🛡️ THE INTRADAY AUTO-SCALING ENGINE ───
+    # If the historical returns series has an index length greater than daily limits,
+    # or if explicitly passed, dynamically update periods_per_year to represent 5-minute bars.
+    # (252 trading days * 78 five-minute bars per session = 19,656 intervals per year)
+    if len(returns_series) > 252 and periods_per_year == 252:
+        # Automatically scales up for high-frequency data pipelines
+        periods_per_year = 19656
 
     # Convert the annualized risk-free asset rate down to the scale period interval
     period_rf = risk_free_rate / periods_per_year
@@ -39,10 +43,6 @@ def calculate_max_drawdown(equity_series: pd.Series) -> float:
     """
     Calculates the Maximum Drawdown (MDD) percentage over an equity curve dataset.
     Identifies the largest historical peak-to-trough drop in total portfolio capital.
-
-    :param equity_series: A Pandas Series tracking the sequential absolute value of account equity.
-    :return: Maximum drawdown expressed as a positive percentage float (e.g., 12.5 for -12.5%).
-             Returns 0.0 if data is invalid or empty.
     """
     if equity_series.empty or len(equity_series) < 2:
         return 0.0

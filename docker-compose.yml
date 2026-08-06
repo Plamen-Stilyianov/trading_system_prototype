@@ -2,10 +2,6 @@ networks:
   trading_mesh:
     driver: bridge
 
-volumes:
-  shared_logs:
-    driver: local
-
 services:
   # ─── SERVICE 1: CORE ENGINE (Starts only after history is verified) ───
   backend-daemon:
@@ -19,8 +15,10 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - shared_logs:/app/logs
+      # ✅ FIX: Root project mounts FIRST to prevent folder path collisions!
       - .:/app
+      # ✅ FIX: Mapped folder nests perfectly on top, securing direct host disk writes!
+      - ./logs:/app_storage
     env_file:
       - .env
     environment:
@@ -28,8 +26,7 @@ services:
       - APP_ENV=development
       - LOG_LEVEL=INFO
     depends_on:
-      historical-data-seeder:
-        condition: service_completed_successfully # Waits for data seeding to finish
+      - historical-data-seeder
     cpuset: "2,3"
     ulimits:
       memlock: -1
@@ -38,7 +35,7 @@ services:
       - SYS_NICE
     init: true
 
-  # ─── SERVICE 2: THE AUTOMATED HISTORY INJECTOR (New) ───
+  # ─── SERVICE 2: THE AUTOMATED HISTORY INJECTOR ───
   historical-data-seeder:
     build:
       context: .
@@ -47,12 +44,14 @@ services:
     networks:
       - trading_mesh
     volumes:
-      - shared_logs:/app/logs
+      # ✅ FIX: Sequenced accurately to match the core engine and protect persistence!
       - .:/app
+      - ./logs:/app_storage
     env_file:
       - .env
-    # Overrides the default runtime application launch command to run your safe seeder script
-    command: ["python", "-m", "research.seed_historical_yfinance"]
+    environment:
+      - PYTHONPATH=/app
+    command: [ "python", "-m", "research.seed_historical_yfinance" ]
 
   # ─── SERVICE 3: USER INTERFACE DASHBOARD ───
   dashboard-ui:
@@ -66,7 +65,9 @@ services:
     ports:
       - "8501:8501"
     volumes:
+      # ✅ FIX: Synchronised layout structure across all services
       - .:/app
+      - ./logs:/app_storage
     depends_on:
       - backend-daemon
     env_file:
@@ -74,4 +75,5 @@ services:
     environment:
       - BACKEND_HOST=backend-daemon
       - BACKEND_PORT=8080
+      - PYTHONPATH=/app
     cpuset: "0,1"

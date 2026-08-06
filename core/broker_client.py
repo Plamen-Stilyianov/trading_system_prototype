@@ -1,4 +1,5 @@
 import json
+import pytz
 import asyncio
 import logging
 from datetime import datetime
@@ -20,25 +21,81 @@ class BrokerClient:
     """
 
     def __init__(self) -> None:
+        # ─── 🏗️ STEP 1: INITIALISE THE CLASS STATE VARIABLE METRICS ───
         self.api_key: str = settings.BROKER_API_KEY
         self.secret_key: str = settings.BROKER_SECRET_KEY
         self.broker_env: str = settings.BROKER_ENV.lower()
 
+        # Custom instance variables defining exchange operational constraints
+        self.market_open_hour: int = 9
+        self.market_open_minute: int = 30
+        self.market_close_hour: int = 16
+
         key_snippet = self.api_key[:6] if self.api_key else "NONE"
         logger.info(
-            f"🔍 [AUTH DEBUG] Envoy Target: {self.broker_env.upper()} | Key Starts With: {key_snippet} | Full Length: {len(self.api_key) if self.api_key else 0}")
+            f"🔍 [AUTH DEBUG] Envoy Target: {self.broker_env.upper()} | Key Starts With: {key_snippet} | Full Length: {len(self.api_key) if self.api_key else 0}"
+        )
 
-        # Inside __init__ in core/broker_client.py
-        if self.broker_env == "live":
-            self.rest_url = "https://api.alpaca.markets"
-            self.ws_url = "wss://stream.data.alpaca.markets/v2/sip"
-        else:
-            self.rest_url = "https://paper-api.alpaca.markets"  # ◄─ Update this
-            self.ws_url = "wss://stream.data.alpaca.markets/v2/iex"
+        self.rest_url: str = settings.ALPACA_REST_URL
+        self.ws_url: str = settings.ALPACA_WS_URL
+
+        logger.info(f"📡 [DYNAMIC NETWORK ROUTERENG] Bound REST target to: {self.rest_url}")
+        logger.info(f"📡 [DYNAMIC NETWORK ROUTERENG] Bound WebSockets stream target to: {self.ws_url}")
 
         self._ws_connection: Optional[websockets.WebSocketClientProtocol] = None
         self._listener_task: Optional[asyncio.Task] = None
         self.is_connected: bool = False
+
+    # ==============================================================================
+    # ⏰ TRUE INSTANCED METHOD: DEPENDS DIRECTLY ON CONSTRUCTOR STATE
+    # ==============================================================================
+    def is_us_equity_market_open(self) -> bool:
+        """
+        Evaluates NYSE/NASDAQ hours locally using the object instance data properties.
+        Bypasses external web dependencies by reading configuration metrics from 'self'.
+        """
+        # 🧪 1. DEPENDENCY CHECK: Bypass clock parameters if flipped to mock testing states
+        if self.broker_env == "testing":
+            logger.debug("🧪 Client Instance set to TESTING mode. Structural clock checks bypassed.")
+            return True
+
+        try:
+            # 2. Convert host machine clock directly to New York Time (EST/EDT)
+            ny_tz = pytz.timezone("America/New_York")
+            ny_now = datetime.now(ny_tz)
+
+            # 3. Restrict operation on weekends (5 = Saturday, 6 = Sunday)
+            if ny_now.weekday() >= 5:
+                return False
+
+            # 4. ACTIVELY CONSUME INSTANCE STATE BOUNDARIES PASSED VIA CONSTRUCTOR
+            # Uses standard 09:30 AM to 04:00 PM constraints bound directly onto 'self'
+            market_open = ny_now.replace(
+                hour=self.market_open_hour,
+                minute=self.market_open_minute,
+                second=0,
+                microsecond=0
+            )
+            market_close = ny_now.replace(
+                hour=self.market_close_hour,
+                minute=0,
+                second=0,
+                microsecond=0
+            )
+
+            # 5. Evaluate if current New York clock sits inside the active trading block
+            is_open = market_open <= ny_now <= market_close
+
+            if not is_open:
+                logger.warning(
+                    f"⏰ [CLOCK SERVICE] Market Closed. Target Env: {self.broker_env.upper()} | Current NY Time: {ny_now.strftime('%H:%M:%S')}"
+                )
+
+            return is_open
+
+        except Exception as e:
+            logger.error(f"Failed instance timezone check for context {self.broker_env}: {str(e)}")
+            return False
 
     async def connect(self) -> None:
         """Establishes connection pools and spawns the background stream listener task."""
@@ -275,17 +332,3 @@ class BrokerClient:
         }
 
 
-data = {'id': '3ae5b50c-21e7-4d6d-b586-1e49b238d8d5', 'admin_configurations': {},
-        'user_configurations': {'dtbp_check': 'entry', 'fractional_trading': True, 'max_margin_multiplier': '4',
-                                'pdt_check': 'entry', 'trade_confirm_email': 'all'}, 'account_number': 'PA3M0YUGQM21',
-        'status': 'ACTIVE', 'crypto_status': 'ACTIVE', 'options_approved_level': 3, 'options_trading_level': 3,
-        'currency': 'USD', 'buying_power': '3706817.92', 'regt_buying_power': '1825095.41',
-        'effective_buying_power': '3706817.92', 'non_marginable_buying_power': '912547.7',
-        'options_buying_power': '912547.7', 'cash': '877155.76', 'accrued_fees': '0', 'portfolio_value': '997189.38',
-        'trading_blocked': False, 'transfers_blocked': False, 'account_blocked': False,
-        'created_at': '2026-04-23T19:08:23.456523Z', 'trade_suspended_by_user': False, 'multiplier': '4',
-        'shorting_enabled': True, 'equity': '997189.38', 'last_equity': '995395.54941146027',
-        'long_market_value': '120033.62', 'short_market_value': '0', 'position_market_value': '120033.62',
-        'initial_margin': '35391.94', 'maintenance_margin': '21235.17', 'last_maintenance_margin': '20772.36',
-        'sma': '947394.34', 'balance_asof': '2026-08-03', 'crypto_tier': 1, 'intraday_adjustments': '0',
-        'pending_reg_taf_fees': '0'}

@@ -32,10 +32,6 @@ class EventDrivenBacktester:
     def run(self, historical_data: pd.DataFrame, strategy_params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Executes an event-driven historical simulation over an OHLCV dataset.
-
-        :param historical_data: Pandas DataFrame containing clean historical bars ('open', 'high', 'low', 'close', 'volume').
-        :param strategy_params: Parameter configurations to initialize the target AI strategy module.
-        :return: High-level dictionary containing backtest performance analytics.
         """
         if historical_data.empty or len(historical_data) < 30:
             logger.error("Backtest execution aborted: Provided historical dataset is too small.")
@@ -44,6 +40,9 @@ class EventDrivenBacktester:
         # Normalize column string naming styles
         df_clean = historical_data.copy()
         df_clean.columns = [col.lower().strip() for col in df_clean.columns]
+
+        # ✅ FIX 1: Extract the dynamic symbol target from incoming parameters natively
+        active_symbol = str(strategy_params.get("target_symbol", "AAPL")).strip().upper()
 
         # Instantiate the exact same concrete strategy class used in live production
         strategy = AITemplateStrategy(strategy_id="BACKTEST_AI_V1", parameters=strategy_params)
@@ -60,7 +59,7 @@ class EventDrivenBacktester:
         self.trade_log = []
 
         # --- Event Loop Simulation ---
-        warmup_buffer = strategy_params.get("rsi_period", 14) + 10
+        warmup_buffer = int(strategy_params.get("rsi_period", 14)) + 10
 
         for i in range(warmup_buffer, len(full_featured_df)):
             current_window = full_featured_df.iloc[:i + 1]
@@ -68,7 +67,7 @@ class EventDrivenBacktester:
 
             # 1. Structure raw dictionary frame to mock a live streaming broker tick update
             mock_tick = {
-                "symbol": strategy_params.get("target_symbol", "AAPL"),
+                "symbol": active_symbol,
                 "last_price": float(latest_bar["close"]),
                 "volume": int(latest_bar["volume"])
             }
@@ -82,16 +81,16 @@ class EventDrivenBacktester:
             # 3. Structural Hot-Patch: Override the strategy features pipeline and bypass empty checks
             strategy.generate_features = lambda df, w=current_window: w
 
-            # Inside research/backtester.py (around line 83)
             def patched_interval_check(positions_dict, w=current_window):
-                symbol = strategy.parameters.get("target_symbol", "AAPL")
+                # ✅ FIX 2: Dynamically binds lookup queues clear of hardcoded text values
+                symbol = str(strategy.parameters.get("target_symbol", active_symbol)).strip().upper()
                 pos_details = positions_dict.get(symbol, {"qty": 0})
                 has_pos = pos_details.get("qty", 0) > 0
 
                 latest_row = w.iloc[-1]
                 current_rsi = latest_row["rsi"]
 
-                # ✅ FIXED: Isolate exactly the 6 columns the model was trained to look for
+                # Isolate exactly the 6 columns the model was trained to look for
                 feature_columns = ["rsi", "sma_fast", "sma_slow", "macd", "bbl", "bbu"]
                 model_features_row = latest_row[feature_columns]
 
@@ -108,7 +107,9 @@ class EventDrivenBacktester:
                 return None
 
             strategy.on_interval_check = patched_interval_check
-            signal = strategy.on_interval_check({"AAPL": current_mock_position})
+
+            # ✅ FIX 3: Pass the dynamic symbol key string directly into the check execution wrapper
+            signal = strategy.on_interval_check({active_symbol: current_mock_position})
 
             # 4. Handle generated signals through our internal mock execution ledger
             if signal and signal["action"] != "HOLD":
