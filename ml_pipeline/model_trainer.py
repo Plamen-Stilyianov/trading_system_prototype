@@ -42,11 +42,20 @@ class TradingModelTrainer:
         df = historical_df.copy()
         df.columns = [col.lower().strip() for col in df.columns]
 
-        # ✅ FIX 3: Re-align calculations to use valid pandas-ta-classic functional interfaces
-        close_series = df["close"]
+        # ─── 🛡️ THE COLUMNS INTERFACE HARMONIZER (FIXED) ───
+        # Maps 'last_price' coming from the table schema natively as your closing price series!
+        if "last_price" in df.columns:
+            close_series = df["last_price"]
+            df["close"] = df["last_price"]  # Populates 'close' key for pct_change mathematical lookups
+        elif "close" in df.columns:
+            close_series = df["close"]
+        else:
+            raise KeyError("Provided dataset structure lacks a valid close or last_price price column.")
+
         high_series = df.get("high", close_series)
         low_series = df.get("low", close_series)
 
+        # Calculate mathematical indicator columns via pandas-ta-classic functional interfaces
         df["rsi"] = ta.rsi(close_series, length=int(settings.RSI_PERIOD))
         df["sma_fast"] = ta.sma(close_series, length=9)
         df["sma_slow"] = ta.sma(close_series, length=21)

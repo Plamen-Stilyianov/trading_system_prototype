@@ -1,5 +1,5 @@
 FROM python:3.12-slim
-WORKDIR /workspace
+WORKDIR /app
 
 # 1. Install system requirements and C-compilers needed for ML wheels (like xgboost)
 RUN apt-get update && apt-get install -y --no-install-recommends \

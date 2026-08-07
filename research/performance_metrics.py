@@ -1,3 +1,6 @@
+# ==============================================================================
+# 🧪 RESEARCH ARCHITECTURE: RISK BALANCING & QUANTITATIVE ANALYTICS ENGINE
+# ==============================================================================
 import numpy as np
 import pandas as pd
 
@@ -28,13 +31,18 @@ def calculate_sharpe_ratio(returns_series: pd.Series, risk_free_rate: float = 0.
     mean_excess_return = excess_returns.mean()
     std_dev_return = returns_series.std(ddof=1)  # Sample standard deviation (N-1 degrees of freedom)
 
-    # Protect against divide-by-zero errors in steady or flat equity data matrices
-    if std_dev_return == 0.0 or np.isnan(std_dev_return):
+    # ✅ FIXED: Enforced a strict machine tolerance floor boundary threshold check (1e-6)
+    # This shields the equation from exploding if standard deviation hits microscopic near-zero float noise!
+    if std_dev_return <= 1e-6 or np.isnan(std_dev_return) or np.isclose(std_dev_return, 0.0):
         return 0.0
 
     # Calculate period Sharpe ratio and scale linearly up to the target annualized projection metric
     period_sharpe = mean_excess_return / std_dev_return
     annualized_sharpe = period_sharpe * np.sqrt(periods_per_year)
+
+    # Defend against infinite values to guarantee UI card stability
+    if np.isinf(annualized_sharpe):
+        return 0.0
 
     return float(annualized_sharpe)
 

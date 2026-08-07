@@ -216,52 +216,66 @@ class BrokerClient:
                 logger.error(f"Error parsing operational frame telemetry data loop packet: {str(e)}")
 
     async def execute_order_payload(self, signal: Dict[str, Any]) -> Dict[str, Any]:
-        """Routes transactional order structures out to production cloud REST APIs via HTTPX."""
+        """
+        Routes transactional order structures out to production cloud REST APIs via HTTPX.
+        ✅ FIX 1: Enforces versioned path /v2/orders matching the official Alpaca specification [INDEX]!
+        ✅ FIX 2: Stringifies quantity attributes to guarantee payload compliance [INDEX].
+        ✅ FIX 3: Validates strict HTTP 200/201 successful return boundaries to avoid crashes [INDEX].
+        """
         headers = {
             "APCA-API-KEY-ID": self.api_key,
             "APCA-API-SECRET-KEY": self.secret_key,
             "Content-Type": "application/json"
         }
 
+        # ✅ Cast quantity to string smoothly to protect Alpaca interface layers format
         order_body = {
-            "symbol": signal["symbol"],
-            "qty": int(signal["quantity"]),
-            "side": signal["action"].lower(),
-            "type": signal["order_type"].lower(),
+            "symbol": str(signal["symbol"]).upper(),
+            "qty": str(int(signal["quantity"])),  # Injects stringified numeric parameters [INDEX]
+            "side": str(signal["action"]).lower(),
+            "type": str(signal.get("order_type", "MARKET")).lower(),
             "time_in_force": "gtc"
         }
 
         if signal.get("limit_price"):
             order_body["limit_price"] = str(signal["limit_price"])
 
-        endpoint = f"{self.rest_url}/orders"
+        # ✅ FIX 1: Appends the vital /v2/ path segment directly into your REST endpoint URL! [INDEX]
+        base_rest_url = str(self.rest_url).rstrip('/')
+        endpoint = f"{base_rest_url}/v2/orders"
+
         state_manager.log_event("ORDER", f"Transmitting {signal['action']} request out to broker API...")
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(endpoint, json=order_body, headers=headers, timeout=5.0)
+            # FIXED: Passing trust_env=False forces HTTPX to ignore host proxies, completely eliminating port drops
+            async with httpx.AsyncClient(trust_env=False) as client:
+                response = await client.post(endpoint, json=order_body, headers=headers, timeout=10.0)
 
-                # Fix: Evaluates the specific acceptable successful HTTP response codes
-                if response.status_code:
+                # ✅ FIX 3: Enforce strict successful HTTP status boundary verification checkpoints! [INDEX]
+                # SUCCESS FORKS ALIGNMENT: 200(OK), 201(Created), or 202(Accepted Async Order Ticket)
+                if response.status_code in [200, 201, 202]:
                     receipt = response.json()
                     fallback_price = float(state_manager.market_data.get(signal["symbol"], {}).get("last_price", 0.0))
 
+                    logger.info(f"🟢 [BROKER ORDER PLACED] Alpaca fill accepted successfully for {signal['symbol']}")
                     return {
                         "status": "FILLED",
                         "order_id": receipt["id"],
                         "symbol": receipt["symbol"],
                         "action": receipt["side"].upper(),
-                        "executed_qty": int(receipt["qty"]),
+                        "executed_qty": float(receipt["qty"]),  # Kept float-safe matching state manager [INDEX]
                         "execution_price": float(receipt["filled_avg_price"]) if receipt.get(
                             "filled_avg_price") else fallback_price,
                         "timestamp": receipt["created_at"]
                     }
                 else:
-                    logger.error(f"Order routing failed at API gateway level: {response.text}")
-                    raise RuntimeError(f"API Refusal Code {response.status_code}")
+                    logger.error(
+                        f"❌ Order routing failed at API gateway level: {response.status_code} | {response.text}")
+                    return {"status": "REJECTED", "order_id": "FAILED", "reason": f"API Error {response.status_code}"}
 
         except Exception as e:
-            logger.error(f"Network error routing transactional parameters to gateway client endpoints: {str(e)}")
+            logger.error(f"Critical execution fault processing broker order route: {str(e)}")
+            state_manager.log_event("SYSTEM", f"Critical Order Routing Failure: {str(e)}")
             return {"status": "REJECTED", "order_id": "FAILED", "reason": str(e)}
 
     async def get_account_summary(self) -> Dict[str, Any]:
@@ -285,7 +299,7 @@ class BrokerClient:
                     # ─── 📡 🎯 DETAILED INBOUND REST DATA DEBUG LOGGER ───
                     # Prints exactly what the raw JSON wire looks like inside your console
                     logger.info("📡 [REST REST INBOUND ACCOUNT PAYLOAD] Fetched from Alpaca gateway:")
-                    logger.info(f"    ↳ Raw JSON: {account_data}")
+                    logger.info(f"    ↳ Raw JSON:'portfolio_value' : {account_data['portfolio_value']} and 'cash' : {account_data['cash']}")
 
                     # Extract values safely, defaulting to 0.0 if missing
                     cash_val = float(account_data.get("cash", 0.0))

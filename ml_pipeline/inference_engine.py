@@ -20,10 +20,9 @@ class InferenceEngine:
         """
         self.model_name = model_name
 
-        # ✅ FIX 1: Map your input directory search logic to the global assets space!
-        # This matches exactly where the TradingModelTrainer dumps its binary weights files.
-        self.model_dir = "/app/assets" if os.path.exists("/app") else os.path.join(os.getcwd(), "assets")
-        self.model_path = os.path.join(self.model_dir, self.model_name)
+        # ✅ THE DEFINITIVE INFRASTRUCTURE ALIGNMENT FIX
+        # Directs the live strategy reader to look straight inside your unmasked storage folder! [INDEX]
+        self.model_path = os.path.join("/app_storage", self.model_name)
         self.model: Any = None
 
         # Load weights on service initialization

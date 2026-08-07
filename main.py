@@ -22,6 +22,8 @@ from core.state_manager import state_manager
 from core.broker_client import BrokerClient  # Uses global instanced reference
 from core.order_manager import OrderManager
 from strategies.ai_template_strategy import AITemplateStrategy
+from strategies.strategy_manager import strategy_manager
+
 
 # ─── 💾 FORCE KUBERNETES PERSISTENT VOLUME STRUCTURE INITIALIZATION ───
 try:
@@ -88,29 +90,20 @@ class EngineToggleSchema(BaseModel):
     """Pydantic gate validation mapping for the UI Master Circuit Toggle."""
     active: bool
 
-# ==============================================================================
-# 🔄 LAYER 2: GLOBAL STRATEGY STATE & MUTABILITY RUNTIME MANAGER
-# ==============================================================================
-class StrategyRuntimeManager:
-    """Tracks and hot-swaps active execution algorithm instances mid-flight."""
-    def __init__(self) -> None:
-        initial_params = {"rsi_period": 14, "rsi_oversold": 30.0, "rsi_overbought": 70.0}
-        self.active_strategy = AITemplateStrategy(strategy_id="AI_ALPHA_V1", parameters=initial_params)
-
-    def switch_strategy(self, strategy_id: str, parameters: Dict[str, Any]) -> None:
-        """Hot-swaps the underlying strategy logic instance safely inside memory loops."""
-        logger.info(f"🔄 Hot-swapping background strategy context: {self.active_strategy.strategy_id} ──► {strategy_id}")
-        self.active_strategy = AITemplateStrategy(strategy_id=strategy_id, parameters=parameters)
-
-# Single mutable tracker instance exposed to the lifecycle context loops
-strategy_manager = StrategyRuntimeManager()
 
 # ==============================================================================
-# 🏃 LAYER 3: ASYNCHRONOUS ENGINE HEARTBEAT PROCESSING LOOP
+# 🏃 LAYER 3: ASYNCHRONOUS ENGINE HEARTBEAT PROCESSING LOOP (THROTTLED)
 # ==============================================================================
 async def execution_loop() -> None:
-    """Main asynchronous loop orchestrating real-time system events."""
+    """
+    Main asynchronous loop orchestrating real-time system events.
+    Throttles high-overhead account REST calls while processing strategy indicator
+    evaluations and machine learning model inferences sequentially every second.
+    """
     logger.info("Starting Core Execution Engine Loop...")
+
+    # ✅ Establish a state iteration counter to decouple balance syncing from tick frequency
+    loop_iteration_count = 0
 
     while True:
         start_time = time.time()
@@ -123,14 +116,13 @@ async def execution_loop() -> None:
                 continue
 
             # ─── 💾 SYNC LIVE REMOTELY DISCOVERED BROKER PORTFOLIO BALANCES ───
-            account_info = await broker_client.get_account_summary()
-            state_manager.update_account(account_info)
-
-            # ─── ⏰ DYNAMIC INSTANCE-AWARE LOCAL TIME CLOCK GATE ───
-            if not broker_client.is_us_equity_market_open():
-                logger.debug("⏰ Regular US Equity Market Session closed. Throttling loop.")
-                await asyncio.sleep(5.0)
-                continue
+            # Only poll account summary profiles once every 30 loop cycles (30 seconds)
+            # This completely eliminates the 1-second REST JSON flood and protects API rate limits!
+            if loop_iteration_count % 30 == 0:
+                logger.debug("📡 Polling fresh balance snapshots from Alpaca gateway network...")
+                account_info = await broker_client.get_account_summary()
+                if account_info:
+                    state_manager.update_account(account_info)
 
             # ─── 📊 UPDATE SYSTEM TELEMETRY METRICS IN PROMETHEUS ───
             metrics_snapshot = state_manager.get_summary_metrics()
@@ -141,31 +133,96 @@ async def execution_loop() -> None:
             # Fetch active strategy from our dynamic runtime hot-swapper registry manager
             current_strategy = strategy_manager.active_strategy
 
-            # ─── 🔄 Loop Over Your Dynamic Watchlist Queue ───
-            # ✅ FIXED: Avoids the missing Pydantic field by polling the current strategy dictionary directly
-            active_watchlist = current_strategy.parameters.get("active_watchlist", [settings.TARGET_SYMBOL])
+            # ─── 🔄 LOOP OVER YOUR DYNAMIC WATCHLIST QUEUE ───
+            active_watchlist = current_strategy.parameters.get("active_watchlist",
+                                                               current_strategy.parameters.get("watchlist",
+                                                                                               current_strategy.parameters.get(
+                                                                                                   "symbols",
+                                                                                                   settings.DEFAULT_WATCHLIST)))  # Production blanket baseline fallback
 
             for symbol in active_watchlist:
+                symbol = str(symbol).strip().upper()
                 tick_data = await broker_client.get_latest_tick(symbol)
+
                 if tick_data is not None:
                     state_manager.update_market_data(tick_data)
 
                 # Process real-time updates and machine learning tick evaluations
-                current_position = state_manager.positions.get(symbol, {"qty": 0})
+                current_position = state_manager.positions.get(symbol, {"qty": 0.0})
                 tick_signal = current_strategy.on_market_tick(tick_data, current_position)
 
+                # ✅ TICK LEVEL EXECUTIONS: Safely checked and processed exactly once!
                 if tick_signal and tick_signal.get("action") != "HOLD":
+                    if tick_signal.get("action") == "BUY":
+                        available_cash = float(state_manager.balance)
+                        estimated_cost = float(tick_signal.get("price", 0.0)) * float(tick_signal.get("quantity", 1))
+
+                        if available_cash <= 0.0 or available_cash < estimated_cost:
+                            logger.warning(
+                                f"⚠️ [CASH EXHAUSTION] Tick BUY for {symbol} blocked. Cash: ${available_cash:,.2f} | Cost: ${estimated_cost:,.2f}")
+                            continue
+
                     METRIC_ORDER_ROUTED.labels(action=tick_signal["action"], symbol=symbol).inc()
                     await order_manager.route_order(tick_signal)
 
-            # ─── 🛡️ PRESERVED NATIVE STRATEGY INTERVAL ARGS ───
-            interval_signal = current_strategy.on_interval_check(state_manager.positions)
-            if interval_signal and interval_signal.get("action") != "HOLD":
-                resolved_symbol = interval_signal.get("symbol", "PORTFOLIO")
-                logger.info(f"🚀 [INTERVAL SIGNAL] Strategy {current_strategy.strategy_id} triggered {interval_signal['action']}")
-                METRIC_ORDER_ROUTED.labels(action=interval_signal["action"], symbol=resolved_symbol).inc()
-                await order_manager.route_order(interval_signal)
+                # ─── 🛡️ DYNAMIC TRAILING STOP-LOSS CHECK LAYER ───
+                if tick_data is not None and symbol in state_manager.positions:
+                    current_price = float(tick_data.get("last_price", 0.0))
+                    pos = state_manager.positions[symbol]
+                    entry_px = float(pos["entry_price"])
 
+                    # Calculate the dynamic 1.5% trailing stop-loss watermark floor
+                    stop_loss_floor = order_manager.risk_engine.calculate_trailing_stop(
+                        entry_price=entry_px,
+                        current_price=current_price,
+                        position_type="long"
+                    )
+
+                    # Cache the floor metric inside your position dictionary
+                    pos["stop_loss_price"] = stop_loss_floor
+
+                    # Trigger an automatic emergency market liquidation route if the floor is breached
+                    if current_price < stop_loss_floor:
+                        logger.warning(
+                            f"🚨 [RISK FLOOR BREACH] {symbol} price ${current_price:.2f} dropped below trailing stop ${stop_loss_floor:.2f}!")
+
+                        liquidation_signal = {
+                            "strategy_id": current_strategy.strategy_id,
+                            "symbol": symbol,
+                            "action": "SELL",
+                            "quantity": pos["qty"],
+                            "order_type": "MARKET",
+                            "price": current_price
+                        }
+                        await order_manager.route_order(liquidation_signal)
+
+                # ❌ REMOVED THE DUPLICATE TICK SIGNAL ORDER ROUTER CAPTURE DATA HERE TO ELIMINATE DOUBLE TRADING TRAPS!
+
+            # ─── 🛡️ BAR INTERVAL CHECK EXTRACTION GATES ───
+            interval_signal = current_strategy.on_interval_check(state_manager.positions)
+
+            if interval_signal and interval_signal.get("action") != "HOLD":
+                resolved_symbol = interval_signal.get("symbol", "PORTFOLIO").strip().upper()
+
+                # ✅ FIX 2: Added a strict cash firewall check on the trailing bar intervals signal as well!
+                if interval_signal.get("action") == "BUY":
+                    available_cash = float(state_manager.balance)
+                    estimated_cost = float(interval_signal.get("price", 0.0)) * float(
+                        interval_signal.get("quantity", 1))
+
+                    if available_cash <= 0.0 or available_cash < estimated_cost:
+                        logger.warning(
+                            f"⚠️ [CASH EXHAUSTION] Interval BUY for {resolved_symbol} blocked. Cash: ${available_cash:,.2f} | Cost: ${estimated_cost:,.2f}")
+                        interval_signal = None  # Neutralize signal cleanly
+
+                if interval_signal:
+                    logger.info(
+                        f"🚀 [INTERVAL SIGNAL] Strategy {current_strategy.strategy_id} triggered {interval_signal['action']}")
+                    METRIC_ORDER_ROUTED.labels(action=interval_signal["action"], symbol=resolved_symbol).inc()
+                    await order_manager.route_order(interval_signal)
+
+            # Increment the loop counter to maintain the 30-second cadence mapping
+            loop_iteration_count += 1
             sleep_duration = 1.0
 
         except Exception as e:
@@ -291,10 +348,11 @@ async def process_and_save_persistent_tuning(payload: PersistentTuningSchema):
             "rsi_overbought": payload.rsi_overbought,
             "ml_confidence_threshold": payload.ml_confidence_threshold,
             "default_qty": payload.default_qty,
-            "active_watchlist": active_watchlist  # ◄── Pass the full list straight down to the strategy instance!
+            "active_watchlist": active_watchlist  # Injects the active checkbox list cleanly [INDEX]
         }
 
-        # 3. Hot-swap the underlying parameters directly inside the execution strategy runtime manager
+        # 3. ─── 🔄 THE DIRECT DECOUPLED HOT-SWAP WIRE (CLEANED) ───
+        # Natively calls your strategy_manager's direct method to swap class objects in mid-session!
         strategy_manager.switch_strategy(strategy_id=payload.strategy_id, parameters=strategy_params)
 
         # 4. Serialize configuration attributes directly down onto SQLite system_parameters tables
@@ -307,8 +365,8 @@ async def process_and_save_persistent_tuning(payload: PersistentTuningSchema):
         ]
         await db_engine.save_session_state(param_tuples, payload.registry_map)
 
-        state_manager.log_event("SYSTEM", f"Tuning applied over REST. Active watchlist queue: {active_watchlist}")
-        return {"status": "success", "synchronized_symbols": active_watchlist}
+        state_manager.log_event("SYSTEM", f"Tuning applied over REST. Active strategy: {payload.strategy_id}. Watchlist: {active_watchlist}")
+        return {"status": "success", "synchronized_symbols": active_watchlist, "active_strategy": payload.strategy_id}
 
     except Exception as e:
         logger.error(f"Critical execution error processing system configuration schema: {str(e)}")
@@ -316,22 +374,23 @@ async def process_and_save_persistent_tuning(payload: PersistentTuningSchema):
 
 
 # ─── ⚡ MASTER ENGINE MOVEMENT CIRCUIT BREAKER INTERCEPTOR (POST ROUTE) ───
-@app.post("/api/v1/engine/toggle", status_code=status.HTTP_200_OK)
-async def toggle_core_trading_engine(payload: EngineToggleSchema):
-    """Manages the master system start / stop circuit breaker switch over the network mesh."""
-    try:
-        state_manager.is_engine_active = payload.active
-        log_action = "ACTIVATED" if payload.active else "DEACTIVATED"
-        logger.warning(f"🚨 [SYSTEM MASTER CONTROL] Trading core engine manually {log_action} over REST API.")
+# Inside your FastAPI toggle endpoint definition block:
 
-        state_manager.log_event(
-            category="SYSTEM",
-            message=f"Master circuit switch shifted state to: {'RUNNING' if payload.active else 'IDLE'}"
-        )
-        return {"status": "success", "is_engine_active": state_manager.is_engine_active}
-    except Exception as e:
-        logger.error(f"Master circuit breaker switch fault: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+@app.post("/api/v1/engine/toggle")
+async def toggle_trading_engine():
+    """Toggles global execution loop master state switches."""
+    # ─── 🛡️ HARDENED ENGINE ACTIVATION HANDSHAKE ───
+    new_active_state = not state_manager.is_engine_active
+    state_manager.set_engine_activity(new_active_state)
+
+    # ✅ FIX: Synchronizes the state directly with the active runtime strategy instance properties!
+    current_strategy = strategy_manager.active_strategy
+    if current_strategy:
+        current_strategy.is_enabled = new_active_state
+        logger.info(
+            f"🎛️ Strategy target instance {current_strategy.strategy_id} activation state flipped to: {new_active_state}")
+
+    return {"status": "success", "engine_active": new_active_state}
 
 
 # ─── 🧪 ARTIFICIAL MARKET DATA TICK INJECTOR TESTING ROUTE (POST ROUTE) ───
